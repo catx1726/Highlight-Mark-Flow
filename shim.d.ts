@@ -17,9 +17,9 @@ declare module 'webext-bridge' {
 // Manually declare the 'rangy' module shape because @types/rangy is incomplete
 declare module 'rangy' {
   interface RangyClassApplier {
-    applyToSelection(win?: Window): void
-    undoToSelection(win?: Window): void
-    toggleSelection(win?: Window): void
+    applyToSelection(selection?: RangySelection): void
+    undoToSelection(selection?: RangySelection): void
+    toggleSelection(selection?: RangySelection): void
   }
 
   interface RangyStatic {
