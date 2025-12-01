@@ -11,6 +11,7 @@ declare module 'webext-bridge' {
     'add-mark': Mark
     'goto-mark': { markId: string }
     'remove-mark': Mark
+    'get-mark-by-id': ProtocolWithReturn<{ id: string; url: string }, Mark>
   }
 }
 // Manually declare the 'rangy' module shape because @types/rangy is incomplete
@@ -27,6 +28,7 @@ declare module 'rangy' {
     createClassApplier(theClass: string, options?: any, tagNames?: string[] | string): RangyClassApplier
     serializeSelection(selection?: RangySelection, omitChecksum?: boolean, rootNode?: Node): string
     deserializeSelection(serialized: string, rootNode?: Node, win?: Window): void
+    createRange(): import('rangy/lib/rangy-core').RangyRange
   }
 
   const rangy: RangyStatic

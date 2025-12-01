@@ -16,4 +16,25 @@ export interface Mark {
   title?: string // 网页 tab 名称
 }
 
+export interface UpdateMarkNotePayload {
+  url: string
+  id: Mark['id'] // 使用 Mark 接口中的 id 类型
+  note: string
+
+  [key: string]: any // 允许对象拥有任何 string 类型的键
+}
+
+export interface RemoveMarkPayload {
+  url: string
+  id: Mark['id']
+  [key: string]: any // 添加索引签名
+}
+
+export interface GetMarkByIdPayload {
+  url: string
+  id: Mark['id']
+
+  [key: string]: any // 添加索引签名
+}
+
 export const { data: storageDemo, dataReady: storageDemoReady } = useWebExtensionStorage('webext-demo', 'Storage Demo')

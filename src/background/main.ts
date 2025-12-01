@@ -1,8 +1,16 @@
-import { until } from '@vueuse/core'
+import { watch } from 'vue'
+
 import { onMessage, sendMessage } from 'webext-bridge/background'
 import type { Tabs } from 'webextension-polyfill'
 // src/background/main.ts
-import { marksByUrl, dataReady } from '~/logic/storage' // 引入我们创建的 storage
+import {
+  type Mark,
+  marksByUrl,
+  dataReady,
+  type RemoveMarkPayload,
+  type UpdateMarkNotePayload,
+  GetMarkByIdPayload
+} from '~/logic/storage' // 引入我们创建的 storage
 
 // only on dev mode
 if (import.meta.hot) {
@@ -83,10 +91,35 @@ onMessage('remove-mark', async ({ data: markToRemove }) => {
 
 onMessage('get-marks-for-url', async ({ data }) => {
   console.log(`[background] Received get-marks-for-url for: ${data.url}`)
-  await until(dataReady).toBe(true)
+  await dataReady
   console.log(`[background] Storage is ready. dataReady.value is: ${dataReady}`)
   const { url } = data
   const result = marksByUrl.value[url] || []
   console.log(`[background] Returning ${result.length} marks for ${url}`)
   return result
+})
+
+onMessage<RemoveMarkPayload>('remove-mark-by-id', async ({ data }) => {
+  const { url, id } = data
+  if (marksByUrl.value[url]) {
+    marksByUrl.value[url] = marksByUrl.value[url].filter((m) => m.id !== id)
+
+    if (marksByUrl.value[url].length === 0) delete marksByUrl.value[url]
+  }
+})
+
+onMessage<UpdateMarkNotePayload>('update-mark-note', async ({ data }) => {
+  const { url, id, note } = data
+  if (marksByUrl.value[url]) {
+    const markToUpdate = marksByUrl.value[url].find((m) => m.id === id)
+    if (markToUpdate) markToUpdate.note = note
+  }
+})
+
+onMessage<GetMarkByIdPayload>('get-mark-by-id', async ({ data }) => {
+  const { url, id } = data
+  if (marksByUrl.value[url]) {
+    return marksByUrl.value[url].find((m) => m.id === id)
+  }
+  return undefined
 })
