@@ -1,24 +1,33 @@
 /* eslint-disable no-console */
 import { onMessage, sendMessage } from 'webext-bridge/content-script'
-import { type App as VueApp, createApp } from 'vue'
-
-import Tooltip from './views/Tooltip.vue'
-
-import rangy from 'rangy'
+import { createApp } from 'vue'
+import rangy from 'rangy/lib/rangy-core'
 import 'rangy/lib/rangy-classapplier'
 import 'rangy/lib/rangy-serializer'
-import { type RangySelection } from 'rangy/lib/rangy-core'
-
-import { setupApp } from '~/logic/common-setup'
-
-// Firefox `browser.tabs.executeScript()` requires scripts return a primitive value
+import Tooltip from './views/Tooltip.vue'
 import { type Mark } from '~/logic/storage'
-import { RangyClassApplier, RangySelection } from 'rangy/lib/rangy-core'
+import { defaultHighlightColor, highlightColors, highlightDefaultStyle, shortcuts } from '~/logic/config'
 
+type RangySelection = ReturnType<typeof rangy.getSelection>
+
+// #region --- Type Definitions ---
+
+/**
+ * 为 Vue Tooltip 实例定义接口以增强类型安全
+ */
+interface TooltipInstance {
+  show(x: number, y: number, isHighlighted: boolean, note: string): void
+  hide(): void
+}
+
+// #endregion
+
+// #region --- State Management ---
 // 用于跟踪已成功恢复到页面上的标记，避免重复操作
 const restoredMarkIds = new Set<string>()
+
 let debounceTimer: number,
-  tooltipApp: VueApp | any,
+  tooltipApp: TooltipInstance | null,
   currentSelection: RangySelection | null = null,
   serializedSelection: string | null = null,
   previewApplier: rangy.RangyClassApplier | null = null
@@ -28,157 +37,211 @@ function initialize() {
   console.info('[vitesse-webext] Hello world from content script')
 
   previewApplier = rangy.createClassApplier('webext-highlight-preview', {
-    elementName: 'span',
-    elementAttributes: { style: 'background-color: yellow; cursor: pointer;' }
+    elementTagName: 'span',
+    elementAttributes: { style: highlightDefaultStyle(defaultHighlightColor.value) }
   })
+  tooltipApp = setupShadowDOMAndTooltip()
 
-  // communication example: send previous tab title from background page
-  onMessage('tab-prev', ({ data }) => {
-    console.log(`[vitesse-webext] Navigate from page "${data.title}"`)
-  })
+  // 注册事件监听器
+  window.addEventListener('mousedown', handleMouseDown)
+  window.addEventListener('mouseup', handleMouseUp, true)
+  window.addEventListener('keydown', handleKeyDown)
 
+  // 处理页面初始加载时的操作，如恢复高亮和滚动到指定标记
+  handleInitialLoadActions()
+}
+
+initialize()
+
+function handleKeyDown(event: KeyboardEvent) {
+  const [mod, key] = shortcuts.openSidePanel.split('+')
+  if (event.altKey && mod.toLowerCase() === 'alt' && event.key.toLowerCase() === key.toLowerCase()) {
+    event.preventDefault()
+  }
+}
+
+// #endregion
+
+// #region --- DOM & UI Setup ---
+
+/**
+ * 设置 Shadow DOM 并挂载 Tooltip Vue 组件
+ * @returns Tooltip 组件的实例
+ */
+function setupShadowDOMAndTooltip(): TooltipInstance {
   const container = document.createElement('div')
-
   container.id = __NAME__
 
-  const root = document.createElement('div'),
-    styleEl = document.createElement('link'),
-    shadowDOM = container.attachShadow?.({ mode: __DEV__ ? 'open' : 'closed' }) || container
+  const shadowDOM = container.attachShadow?.({ mode: __DEV__ ? 'open' : 'closed' }) || container
 
+  const styleEl = document.createElement('link')
   styleEl.setAttribute('rel', 'stylesheet')
-
   styleEl.setAttribute('href', browser.runtime.getURL('dist/contentScripts/style.css'))
-
   shadowDOM.appendChild(styleEl)
 
+  const root = document.createElement('div')
   shadowDOM.appendChild(root)
 
   // 为工具提示创建一个单独的根
   const tooltipRoot = document.createElement('div')
-
   shadowDOM.appendChild(tooltipRoot)
 
   document.body.appendChild(container)
 
   // 挂载工具提示组件
-  const tooltipVueApp = createApp(Tooltip, {
+  const app = createApp(Tooltip, {
     onSave: handleSaveAction,
     onDelete: handleDeleteAction
   })
 
-  tooltipApp = tooltipVueApp.mount(tooltipRoot)
-
-  // 页面加载时，开始恢复高亮
-  restoreHighlights()
-    .then(() => {
-      console.log('restoreHighlights then')
-
-      const hash = window.location.hash
-      if (hash.startsWith('#__highlight-mark__')) {
-        const markId = hash.substring('#__highlight-mark__'.length)
-        console.log('restoreHighlights markId', markId)
-        if (markId) {
-          setTimeout(() => {
-            // 使用一个小的延迟确保高亮渲染和页面布局稳定
-            scrollToMark(markId)
-            // 清理 URL，避免刷新时再次滚动
-            history.replaceState(null, '', window.location.pathname + window.location.search)
-          }, 100)
-        }
-      }
-    })
-    .catch((error) => {
-      console.error('Error during highlight restoration or scrolling:', error)
-    })
+  return app.mount(tooltipRoot) as unknown as TooltipInstance
 }
 
-initialize()
+/**
+ * 处理页面初始加载时的操作，恢复高亮并滚动到指定标记
+ */
+async function handleInitialLoadActions() {
+  try {
+    await restoreHighlights()
+    console.log('Highlights restored.')
 
-window.addEventListener('mousedown', (event) => {
+    const hash = window.location.hash
+    if (!hash.startsWith('#__highlight-mark__')) return
+
+    const markId = hash.substring('#__highlight-mark__'.length)
+    if (!markId) return
+
+    // 使用一个小的延迟确保高亮渲染和页面布局稳定
+    setTimeout(() => {
+      scrollToMark(markId)
+      // 清理 URL，避免刷新时再次滚动
+      history.replaceState(null, '', window.location.pathname + window.location.search)
+    }, 100)
+  } catch (error) {
+    console.error('Error during highlight restoration or scrolling:', error)
+  }
+}
+
+// #endregion
+
+// #region --- Event Listeners & Handlers ---
+
+function handleMouseDown(event: MouseEvent) {
   // 使用 composedPath 来正确处理来自 Shadow DOM 的事件。
   // 如果点击发生在工具提示内部，则不执行任何操作。
   const path = event.composedPath()
-  if (path.some((el) => el instanceof HTMLElement && el.classList.contains('webext-tooltip'))) return
+  if (path.some((el) => el instanceof HTMLElement && el.classList.contains('tooltip-card'))) return
 
   const target = event.target as HTMLElement
-  // 如果点击发生在标记之外，则隐藏工具提示。
-  // 如果点击发生在标记上，则 mouseup 事件将处理显示工具提示。
+  // 如果点击发生在标记之外，则隐藏工具提示；如果点击在标记上，则由 mouseup 事件处理
   if (!target.closest('span[class*="webext-highlight-"]')) tooltipApp?.hide()
-})
+}
 
-window.addEventListener('mouseup', handlePageMouseUp, true)
-
-function handlePageMouseUp(event: MouseEvent) {
-  // 使用 composedPath 来正确处理来自 Shadow DOM 的事件。
-  // 如果 mouseup 事件发生在工具提示内部，则忽略它，以防止它干扰按钮点击。
+function handleMouseUp(event: MouseEvent) {
   const path = event.composedPath()
-
-  if (event.button === 2 || path.some((el) => el instanceof HTMLElement && el.classList.contains('webext-tooltip')))
+  // 忽略右键点击或在工具提示内部的 mouseup 事件
+  if (event.button === 2 || path.some((el) => el instanceof HTMLElement && el.classList.contains('tooltip-card')))
     return
 
   // 延迟一小段时间确保选区稳定
-  setTimeout(() => {
-    const selection = rangy.getSelection(),
-      targetNode = event.target as Node,
-      targetElement = (targetNode.nodeType === Node.ELEMENT_NODE ? targetNode : targetNode.parentNode) as HTMLElement,
-      markElement = targetElement?.closest('span[class*="webext-highlight-"]') as HTMLElement | null
-
-    console.log('mouseup', targetElement, selection, markElement)
-
-    // 在处理新选区或点击之前，清除任何现有的预览高亮
-    clearPreviewHighlight()
-
-    if (!selection.isCollapsed) {
-      // 情况1：用户选择了新的文本
-      currentSelection = selection
-      serializedSelection = rangy.serializeSelection(selection, true)
-      // 立即应用预览高亮
-      previewApplier?.applyToSelection(selection)
-      showTooltipForSelection(selection, event.clientX, event.clientY)
-    } else if (markElement) {
-      const markId = getMarkIdFromElement(markElement)
-      if (markId) {
-        const allSpans = document.querySelectorAll(`.webext-highlight-${markId}`)
-        if (allSpans.length > 0) {
-          const firstSpan = allSpans[0],
-            lastSpan = allSpans[allSpans.length - 1],
-            range = rangy.createRange()
-          range.setStartBefore(firstSpan)
-          range.setEndAfter(lastSpan)
-
-          // Create a temporary selection just for serialization, then clear it immediately.
-          const tempSelection = rangy.getSelection()
-          tempSelection.removeAllRanges()
-          tempSelection.addRange(range)
-          serializedSelection = rangy.serializeSelection(tempSelection, true)
-          tempSelection.removeAllRanges() // Clear it right away
-
-          showTooltipForExistingMark(markId, event.clientX, event.clientY)
-        }
-      }
-    } else {
-      // 情况3：用户点击了页面的其他地方，并且没有选择文本
-      tooltipApp?.hide()
-    }
-  }, 50)
+  setTimeout(() => processSelection(event), 50)
 }
 
+// #endregion
+
+// #region --- Selection Processing & Tooltip ---
+
+/**
+ * 处理用户选择或点击操作
+ */
+function processSelection(event: MouseEvent) {
+  const selection = rangy.getSelection(),
+    targetNode = event.target as Node,
+    targetElement = (targetNode.nodeType === Node.ELEMENT_NODE ? targetNode : targetNode.parentNode) as HTMLElement,
+    markElement = targetElement?.closest('span[class*="webext-highlight-"]') as HTMLElement | null
+
+  console.log('mouseup', targetElement, selection, markElement)
+
+  // 在处理新选区或点击之前，清除任何现有的预览高亮
+  clearPreviewHighlight()
+
+  // 情况1：用户选择了新的文本
+  if (!selection.isCollapsed) {
+    handleNewSelection(selection, event.clientX, event.clientY)
+    return
+  }
+
+  // 情况2：用户点击了已存在的高亮标记
+  if (markElement) {
+    handleExistingMarkClick(markElement, event.clientX, event.clientY)
+    return
+  }
+
+  // 情况3：用户点击了页面的其他地方，并且没有选择文本
+  tooltipApp?.hide()
+}
+
+/**
+ * 处理新的文本选择
+ */
+function handleNewSelection(selection: RangySelection, x: number, y: number) {
+  currentSelection = selection
+  serializedSelection = rangy.serializeSelection(selection, true)
+  // 立即应用预览高亮
+  previewApplier?.applyToSelection()
+  showTooltipForSelection(x, y)
+}
+
+/**
+ * 处理对已存在高亮标记的点击
+ */
+function handleExistingMarkClick(markElement: HTMLElement, x: number, y: number) {
+  const markId = getMarkIdFromElement(markElement)
+  if (!markId) return
+
+  // 重建整个标记的范围以获取其序列化信息，这对于删除操作是必要的
+  const allSpans = document.querySelectorAll(`.webext-highlight-${markId}`)
+  if (allSpans.length === 0) return
+
+  const firstSpan = allSpans[0]
+  const lastSpan = allSpans[allSpans.length - 1]
+  const range = rangy.createRange()
+  range.setStartBefore(firstSpan)
+  range.setEndAfter(lastSpan)
+
+  // 使用一个临时的选区来序列化范围，然后立即清除它
+  const tempSelection = rangy.getSelection()
+  tempSelection.removeAllRanges()
+  tempSelection.addRange(range)
+  serializedSelection = rangy.serializeSelection(tempSelection, true)
+  tempSelection.removeAllRanges() // 立即清理
+
+  showTooltipForExistingMark(markId, x, y)
+}
+
+/**
+ * 为已存在的高亮标记显示工具提示
+ */
 async function showTooltipForExistingMark(markId: string, x: number, y: number) {
-  // This function is called when a mark is clicked.
-  // `serializedSelection` is already set. We know it's highlighted.
+  // 当点击一个标记时调用此函数。此时 `serializedSelection` 已被设置。
   const mark = await sendMessage('get-mark-by-id', { id: markId, url: getCanonicalUrlForMark() }, 'background')
   const note = mark ? mark.note : ''
   tooltipApp?.show(x, y, true, note)
 }
 
-async function showTooltipForSelection(selection: RangySelection, x: number, y: number) {
-  // For a new selection, we are in "create" mode. "isHighlighted" should be false
-  // so the "Delete" button does not show.
+/**
+ * 为新的文本选择显示工具提示
+ */
+function showTooltipForSelection(x: number, y: number) {
+  // 对于新选区，我们处于“创建”模式，isHighlighted 应为 false，这样“删除”按钮就不会显示。
   const isHighlighted = false
   const note = ''
   tooltipApp?.show(x, y, isHighlighted, note)
 }
 
+/**
+ * 清除预览高亮。
+ */
 function clearPreviewHighlight() {
   const previewElements = document.querySelectorAll('.webext-highlight-preview')
   const parentsToNormalize = new Set<Node>()
@@ -209,49 +272,66 @@ function clearPreviewHighlight() {
   })
 }
 
+// #endregion
+
+// #region --- Mark & Highlight CRUD ---
+
 async function handleSaveAction(note: string) {
   // 在保存前，清除预览高亮
   clearPreviewHighlight()
-
   if (!serializedSelection) return
-  rangy.deserializeSelection(serializedSelection)
-  currentSelection = rangy.getSelection()
 
-  if (!currentSelection || currentSelection.isCollapsed) return
+  try {
+    rangy.deserializeSelection(serializedSelection)
+    const selection = rangy.getSelection()
 
-  const markElement = findMarkElementInSelection(currentSelection)
+    if (!selection || selection.isCollapsed) return
 
-  // 已存在高亮：更新备注
-  if (markElement) {
-    const markId = getMarkIdFromElement(markElement)
-    if (markId) sendMessage('update-mark-note', { id: markId, url: getCanonicalUrlForMark(), note }, 'background')
-  } else createHighlight(currentSelection, note)
+    const markElement = findMarkElementInSelection(selection)
 
-  currentSelection = null
-  serializedSelection = null
-}
-
-function handleDeleteAction() {
-  if (!serializedSelection) return
-  rangy.deserializeSelection(serializedSelection)
-  currentSelection = rangy.getSelection()
-
-  if (!currentSelection || currentSelection.isCollapsed) return
-
-  const markElement = findMarkElementInSelection(currentSelection)
-
-  console.log('handleDeleteAction', markElement)
-
-  if (markElement) {
-    const markId = getMarkIdFromElement(markElement)
-    if (markId) removeMarkById(markId)
+    // 已存在高亮：更新备注
+    if (markElement) {
+      const markId = getMarkIdFromElement(markElement)
+      if (markId)
+        await sendMessage('update-mark-note', { id: markId, url: getCanonicalUrlForMark(), note }, 'background')
+    } else {
+      // 不存在高亮：创建新的
+      await createHighlight(selection, note)
+    }
+  } catch (e) {
+    console.error('Error during save action:', e)
+  } finally {
+    // 确保在操作完成后清理状态
+    currentSelection = null
+    serializedSelection = null
+    rangy.getSelection().removeAllRanges()
   }
-
-  currentSelection = null
-  serializedSelection = null
 }
 
-function removeMarkById(markId: string) {
+async function handleDeleteAction() {
+  if (!serializedSelection) return
+
+  try {
+    rangy.deserializeSelection(serializedSelection)
+    const selection = rangy.getSelection()
+
+    if (!selection || selection.isCollapsed) return
+
+    const markElement = findMarkElementInSelection(selection)
+    if (markElement) {
+      const markId = getMarkIdFromElement(markElement)
+      if (markId) await removeMarkById(markId)
+    }
+  } catch (e) {
+    console.error('Error during delete action:', e)
+  } finally {
+    currentSelection = null
+    serializedSelection = null
+    rangy.getSelection().removeAllRanges()
+  }
+}
+
+async function removeMarkById(markId: string) {
   const className = `webext-highlight-${markId}`
   const parentsToNormalize = new Set<Node>()
 
@@ -265,54 +345,21 @@ function removeMarkById(markId: string) {
       parent.removeChild(el)
     }
   })
-  // After removing the highlight spans, we need to normalize the parent nodes
-  // to merge any adjacent text nodes that were created by unwrapping the span.
-  // This prevents errors when serializing/deserializing selections on this content later.
+  // 移除高亮 span 后，需要规范化父节点以合并相邻的文本节点
   parentsToNormalize.forEach((parent) => parent.normalize())
-  rangy.getSelection().removeAllRanges()
-  currentSelection = null
 
   // 通知背景脚本从存储中删除标记
-  sendMessage('remove-mark-by-id', { id: markId, url: getCanonicalUrlForMark() }, 'background')
+  await sendMessage('remove-mark-by-id', { id: markId, url: getCanonicalUrlForMark() }, 'background')
 }
 
-function findMarkElementInSelection(selection: RangySelection): HTMLElement | null {
-  if (selection.rangeCount === 0) return null
-  const range = selection.getRangeAt(0)
-
-  // First, check if the common ancestor is inside a mark. This is fast and covers selections within a single span.
-  const ancestor = range.commonAncestorContainer
-  const el = ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as HTMLElement) : ancestor.parentElement
-  const closestMark = el?.closest('span[class*="webext-highlight-"]')
-  if (closestMark) return closestMark as HTMLElement
-
-  // If not, the selection might span multiple nodes. Check for any mark nodes within the selection using Rangy's API.
-  // This is more robust for selections that cross element boundaries.
-  const nodes = range.getNodes([Node.ELEMENT_NODE])
-  for (const node of nodes) {
-    if ((node as HTMLElement).tagName === 'SPAN' && (node as HTMLElement).className.includes('webext-highlight-'))
-      return node as HTMLElement
-  }
-
-  return null
-}
-
-function getMarkIdFromElement(element: HTMLElement): string | null {
-  const classNames = element.className.split(' ')
-  const highlightClass = classNames.find((c) => c.startsWith('webext-highlight-'))
-  if (highlightClass) return highlightClass.replace('webext-highlight-', '')
-
-  return null
-}
-
-function createHighlight(selection: RangySelection, note?: string) {
+async function createHighlight(selection: RangySelection, note?: string) {
   const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
   const className = `webext-highlight-${uniqueId}`
 
   const applier = rangy.createClassApplier(className, {
-    elementName: 'span',
+    elementTagName: 'span',
     elementAttributes: {
-      style: 'background-color: yellow; cursor: pointer;'
+      style: highlightDefaultStyle(defaultHighlightColor.value)
     }
   })
 
@@ -321,7 +368,7 @@ function createHighlight(selection: RangySelection, note?: string) {
   const selectedText = selection.toString()
 
   // 应用高亮
-  applier.applyToSelection(selection)
+  applier.applyToSelection()
 
   // 清除用户在屏幕上的选区
   selection.removeAllRanges()
@@ -331,27 +378,20 @@ function createHighlight(selection: RangySelection, note?: string) {
     id: uniqueId,
     url: getCanonicalUrlForMark(),
     text: selectedText,
-    note: note || '', // 暂时硬编码
-    color: 'yellow',
+    note: note || '',
+    color: defaultHighlightColor.value,
     rangySerialized,
     createdAt: Date.now(),
     title: document.title
   }
 
   // 通过 webext-bridge 将新标记发送到背景脚本进行存储
-  sendMessage('add-mark', markData, 'background')
+  await sendMessage('add-mark', markData, 'background')
 }
 
-onMessage('goto-mark', ({ data }) => {
-  scrollToMark(data.markId)
-})
+// #endregion
 
-onMessage('remove-mark', ({ data: markToRemove }) => {
-  if (!markToRemove || !markToRemove.id) return
-
-  removeMarkById(markToRemove.id)
-})
-
+// #region --- Utility Functions ---
 function scrollToMark(markId: string) {
   // 在滚动前清除任何待定的恢复操作，以防止它们在滚动动画期间改变布局
   clearTimeout(debounceTimer)
@@ -363,10 +403,10 @@ function scrollToMark(markId: string) {
     // 可以给目标元素一个短暂的闪烁效果以提示用户
     document.querySelectorAll(`.${className}`).forEach((el) => {
       if (!(el instanceof HTMLElement)) return
-      el.style.transition = 'background-color 0.5s ease-in-out'
-      el.style.backgroundColor = 'lightgreen'
+      el.style.transition = 'box-shadow 0.5s ease-in-out'
+      el.style.boxShadow = `inset 0 -5px 0 0 ${highlightColors[1]}`
       setTimeout(() => {
-        el.style.backgroundColor = 'yellow' // TODO: 应该恢复为标记的原始颜色
+        el.style.boxShadow = `inset 0 -5px 0 0 ${defaultHighlightColor.value}`
       }, 1000)
     })
   }
@@ -376,13 +416,39 @@ function scrollToMark(markId: string) {
  * 获取当前页面的规范化 URL，移除哈希和尾部斜杠
  */
 function getCanonicalUrlForMark(): string {
-  const urlObj = new URL(window.location.href)
-  urlObj.hash = ''
-  if (urlObj.pathname.length > 1 && urlObj.pathname.endsWith('/')) urlObj.pathname = urlObj.pathname.slice(0, -1)
-
-  return urlObj.href
+  const { origin, pathname } = window.location
+  // 移除尾部斜杠，但保留根路径的斜杠
+  const cleanedPathname = pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname
+  return origin + cleanedPathname
 }
 
+function findMarkElementInSelection(selection: RangySelection): HTMLElement | null {
+  if (selection.rangeCount === 0) return null
+  const range = selection.getRangeAt(0)
+
+  // 快速路径：检查共同祖先节点是否在高亮标记内部
+  const ancestor = range.commonAncestorContainer
+  const el = ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as HTMLElement) : ancestor.parentElement
+  const closestMark = el?.closest('span[class*="webext-highlight-"]')
+  if (closestMark) return closestMark as HTMLElement
+
+  // 备用路径：如果选区跨越多个节点，检查选区内的任何元素节点是否为高亮标记
+  const nodes = range.getNodes([Node.ELEMENT_NODE])
+  return (
+    (nodes.find(
+      (node) =>
+        (node as HTMLElement).tagName === 'SPAN' && (node as HTMLElement).className.includes('webext-highlight-')
+    ) as HTMLElement) || null
+  )
+}
+
+function getMarkIdFromElement(element: HTMLElement): string | null {
+  const highlightClass = Array.from(element.classList).find((c) => c.startsWith('webext-highlight-'))
+  return highlightClass ? highlightClass.replace('webext-highlight-', '') : null
+}
+// #endregion
+
+// #region --- Highlight Restoration ---
 /**
  * 恢复高亮的主函数
  */
@@ -436,8 +502,8 @@ function applyMarks(marks: Mark[]) {
   for (const mark of marks) {
     const className = `webext-highlight-${mark.id}`
     const applier = rangy.createClassApplier(className, {
-      elementName: 'span',
-      elementAttributes: { style: `background-color: ${mark.color}; cursor: pointer;` }
+      elementTagName: 'span',
+      elementAttributes: { style: highlightDefaultStyle(mark.color) }
     })
 
     try {
@@ -451,3 +517,22 @@ function applyMarks(marks: Mark[]) {
     }
   }
 }
+// #endregion
+
+// #region --- WebExtension Message Listeners ---
+
+onMessage('tab-prev', ({ data }) => {
+  console.log(`[vitesse-webext] Navigate from page "${data.title}"`)
+})
+
+onMessage('goto-mark', ({ data }) => {
+  scrollToMark(data.markId)
+})
+
+onMessage('remove-mark', async ({ data: markToRemove }) => {
+  if (!markToRemove || !markToRemove.id) return
+
+  await removeMarkById(markToRemove.id)
+})
+
+// #endregion
