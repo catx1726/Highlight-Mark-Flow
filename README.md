@@ -1,8 +1,8 @@
 ## ✨ Highlight Mark Flow：网页高亮与知识回顾浮岛
 
-> 告别在长文中的无限滚动。Highlight Mark Flow 将您最重要的知识点提取到侧边浮岛，实现**一键回顾与极速跳转**。
+告别在长文中的无限滚动。Highlight Mark Flow 将您最重要的知识点提取到侧边浮岛，实现**一键回顾与极速跳转**。
 
-[](https://www.google.com/search?q=https://github.com/your-username/your-repo) [](https://www.google.com/search?q=LICENSE) [](https://www.google.com/search?q=)
+![Highlight Mark Flow](./assets/Highlight-Mark-Flow_2.gif '系统界面预览')
 
 ---
 
