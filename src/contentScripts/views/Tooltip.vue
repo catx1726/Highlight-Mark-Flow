@@ -1,37 +1,198 @@
 <template>
-  <div v-if="visible" class="tooltip-card" :style="{ top: `${position.y}px`, left: `${position.x}px` }">
-    <div class="tooltip-content">
+  <div
+    v-if="visible"
+    class="tooltip-card fixed z-max w-[300px] rounded-lg bg-white p-[12px] font-sans shadow-lg"
+    :style="{ top: `${position.y}px`, left: `${position.x}px` }"
+    @mousedown.stop
+  >
+    <div class="tooltip-content flex flex-col gap-[12px]">
+      <div class="tooltip-colors flex gap-[4px] items-center">
+        <button
+          v-for="color in highlightColors"
+          :key="color"
+          class="color-swatch h-[20px] w-[20px] cursor-pointer rounded-full border-[2px] border-transparent p-0 transition-all duration-200 ease-in-out transform hover:scale-110 hover:translate-y-[-0.25rem] hover:z-20 relative"
+          :style="{ backgroundColor: color }"
+          :class="{ 'is-selected !border-brand-blue': selectedColor === color }"
+          @click="selectedColor = color"
+        />
+      </div>
       <textarea
         ref="textareaRef"
         v-model="noteValue"
-        class="tooltip-textarea"
-        placeholder="你正在想些什么"
+        class="tooltip-textarea min-h-[60px] min-w-[250px] resize-y rounded-md border border-gray-300 p-[8px] text-[14px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        placeholder="你正在想什么..."
         @keydown.enter.prevent="onSaveClick"
         @keydown.esc="hide"
       />
-      <div class="tooltip-actions">
-        <button v-if="isHighlighted" class="action-button delete-button" @click="onDeleteClick">删除</button>
-        <button class="action-button save-button" @click="onSaveClick">保存</button>
+      <div class="tooltip-actions flex justify-end w-full gap-[8px]">
+        <button
+          class="action-button copy-button p-[4px] text-gray-400 hover:text-blue-600 rounded-full"
+          title="复制文本"
+          @click="onCopyClick"
+        >
+          <svg
+            v-if="copySuccess"
+            xmlns="http://www.w3.org/2000/svg"
+            class="w-[20px] h-[20px] text-green-500 transition-colors"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+              clip-rule="evenodd"
+            />
+          </svg>
+          <svg
+            v-else
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-[20px] w-[20px]"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+            <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" />
+          </svg>
+        </button>
+
+        <button
+          v-if="isHighlighted"
+          class="action-button delete-button rounded-md bg-red-600 px-[12px] py-[6px] text-[14px] font-medium text-white hover:bg-red-700"
+          @click="onDeleteClick"
+        >
+          删除 ({{ shortcutDeleteText }})
+        </button>
+        <button
+          class="action-button save-button rounded-md bg-blue-600 px-[12px] py-[6px] text-[14px] font-medium text-white hover:bg-blue-700"
+          @click="onSaveClick"
+        >
+          确认 ({{ shortcutSaveText }})
+        </button>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, reactive, ref } from 'vue'
-import { defaultHighlightColor, highlightColors } from '~/logic/config'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { settings } from '~/logic/settings'
 
 const visible = ref(false)
 const position = reactive({ x: 0, y: 0 })
 const isHighlighted = ref(false)
 const noteValue = ref('')
-const selectedColor = ref(defaultHighlightColor.value)
+const selectedColor = ref(settings.value.defaultHighlightColor)
+const highlightColors = computed(() => settings.value.highlightColors)
+const defaultHighlightColor = computed(() => settings.value.defaultHighlightColor)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const textToCopy = ref('')
+const copySuccess = ref(false)
+const formatShortcutForDisplay = (shortcut: string) => {
+  let text = shortcut
+  if (isMac) {
+    text = text
+      .replace(/meta|cmd|command/gi, '⌃') // Control on Mac
+      .replace(/ctrl|control/gi, '⌘') // Command on Mac
+      .replace(/alt/gi, '⌥')
+      .replace(/shift/gi, '⇧')
+  }
+  return text.replace(/\+/g, ' + ')
+}
+const shortcutSaveText = computed(() => formatShortcutForDisplay(settings.value.shortcutSave))
+const shortcutDeleteText = computed(() => formatShortcutForDisplay(settings.value.shortcutDelete))
+const isMac = /mac/i.test(navigator.platform)
 
 const emit = defineEmits<{
   (e: 'save', note: string, color: string): void
   (e: 'delete'): void
+  (e: 'color-change', color: string, isExisting: boolean): void
+  (e: 'clear-preview'): void
 }>()
+
+watch(selectedColor, (newColor) => {
+  // 当在工具提示中选择新颜色时，发出一个事件。
+  // 对于新选区，这将触发预览更新。
+  // 对于已有的高亮，这将触发直接的样式更新。
+  emit('color-change', newColor, isHighlighted.value)
+})
+
+const handleKeydown = (event: KeyboardEvent) => {
+  if (!visible.value) return
+
+  // Handle Ctrl+C / Cmd+C for copying original text
+  // This should not override the default copy behavior inside the textarea.
+  const isPrimaryModifierOnly =
+    (isMac ? event.metaKey : event.ctrlKey) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    (isMac ? !event.ctrlKey : !event.metaKey)
+
+  if (event.key.toLowerCase() === 'c' && isPrimaryModifierOnly) {
+    // If the focus is on the textarea, let the default browser behavior handle the copy.
+    if (event.target === textareaRef.value) return
+
+    // Otherwise, copy the original highlighted text.
+    event.preventDefault()
+    event.stopPropagation()
+    onCopyClick()
+    // If it's a new selection (not an existing highlight), also clear the preview highlight.
+    if (!isHighlighted.value) emit('clear-preview')
+
+    hide()
+    return // Prevent fall-through
+  }
+
+  const formatShortcut = (shortcut: string) => {
+    const parts = shortcut
+      .toLowerCase()
+      .split('+')
+      .map((p) => p.trim())
+    const key = parts.pop() || ''
+    const alt = parts.includes('alt')
+    const ctrl = parts.includes('ctrl') || parts.includes('control')
+    const meta = parts.includes('meta') || parts.includes('cmd') || parts.includes('command')
+    const shift = parts.includes('shift')
+    return { key, alt, ctrl, shift, meta }
+  }
+
+  const match = (shortcut: ReturnType<typeof formatShortcut>) => {
+    if (event.key.toLowerCase() !== shortcut.key) return false
+    if (event.altKey !== shortcut.alt) return false
+    if (event.shiftKey !== shortcut.shift) return false
+    // 将 'Ctrl' 映射到 Mac 上的 'Command' 键
+    const primaryModifier = isMac ? event.metaKey : event.ctrlKey
+    if (shortcut.ctrl !== primaryModifier) return false
+
+    // 将 'Meta' 映射到 Mac 上的 'Control' 键
+    const secondaryModifier = isMac ? event.ctrlKey : event.metaKey
+    if (shortcut.meta !== secondaryModifier) return false
+
+    return true
+  }
+
+  if (match(formatShortcut(settings.value.shortcutSave))) {
+    event.preventDefault()
+    event.stopPropagation()
+    onSaveClick()
+  } else if (isHighlighted.value && match(formatShortcut(settings.value.shortcutDelete))) {
+    event.preventDefault()
+    event.stopPropagation()
+    onDeleteClick()
+  }
+}
+
+async function onCopyClick() {
+  if (!textToCopy.value) return
+  try {
+    await navigator.clipboard.writeText(textToCopy.value)
+    copySuccess.value = true
+    setTimeout(() => {
+      copySuccess.value = false
+    }, 1500)
+  } catch (err) {
+    console.error('Failed to copy text: ', err)
+  }
+}
 
 function onSaveClick() {
   emit('save', noteValue.value, selectedColor.value)
@@ -46,7 +207,14 @@ function onDeleteClick() {
 /**
  * 显示工具提示，并根据屏幕边界自动调整位置。
  */
-function show(x: number, y: number, highlighted: boolean, initialNote = '', initialColor?: string) {
+function show(
+  x: number,
+  y: number,
+  highlighted: boolean,
+  initialNote = '',
+  initialColor: string | undefined,
+  initialTextToCopy = ''
+) {
   // 工具提示的预估尺寸，用于边界检测
   const tooltipWidth = 300
   const tooltipHeight = 160
@@ -67,6 +235,8 @@ function show(x: number, y: number, highlighted: boolean, initialNote = '', init
   isHighlighted.value = highlighted
   noteValue.value = initialNote
   selectedColor.value = initialColor || defaultHighlightColor.value
+  textToCopy.value = initialTextToCopy
+
   visible.value = true
 
   nextTick(() => {
@@ -78,90 +248,16 @@ function hide() {
   visible.value = false
 }
 
+onMounted(() => {
+  window.addEventListener('keydown', handleKeydown, true)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown, true)
+})
+
 // Expose functions to the parent component
 defineExpose({ show, hide })
 </script>
 
-<style scoped>
-.tooltip-card {
-  position: fixed;
-  z-index: 2147483647; /* Max z-index */
-  background-color: #ffffff;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  padding: 12px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  transition: opacity 0.2s ease;
-}
-
-.tooltip-content {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.tooltip-colors {
-  display: flex;
-  gap: 8px;
-}
-
-.color-swatch {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: pointer;
-  padding: 0;
-  transition: border-color 0.2s ease;
-}
-
-.color-swatch.is-selected {
-  border-color: #4285f4; /* Google Blue */
-}
-
-.tooltip-textarea {
-  min-width: 250px;
-  min-height: 60px;
-  border: 1px solid #dadce0;
-  border-radius: 4px;
-  padding: 8px;
-  font-size: 14px;
-  resize: vertical;
-}
-.tooltip-textarea:focus {
-  outline: 2px solid #4285f4;
-  border-color: transparent;
-}
-
-.tooltip-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.action-button {
-  padding: 6px 12px;
-  border: none;
-  border-radius: 4px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-
-.save-button {
-  background-color: #4285f4;
-  color: white;
-}
-.save-button:hover {
-  background-color: #357ae8;
-}
-
-.delete-button {
-  background-color: #ea4335;
-  color: white;
-}
-.delete-button:hover {
-  background-color: #e03324;
-}
-</style>
+<style scoped></style>

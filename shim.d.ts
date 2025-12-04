@@ -7,12 +7,13 @@ declare module 'webext-bridge' {
     // define message protocol types
     // see https://github.com/antfu/webext-bridge#type-safe-protocols
     'tab-prev': { title: string | undefined }
-    'open-sidepanel': { tabId: number }
+    'open-sidepanel': ProtocolWithReturn<{ tabId ?: number }, { success: boolean; browser: string; error?: string }>
     'get-current-tab': ProtocolWithReturn<{ tabId: number }, { title?: string }>
     'get-marks-for-url': ProtocolWithReturn<{ url: string }, Mark[]>
     'get-mark-by-id': ProtocolWithReturn<{ id: string; url: string }, Mark>
     'remove-mark-by-id': { id: string; url: string }
     'update-mark-note': { id: string; url: string; note: string }
+    'update-mark-details': { id: string; url: string; note?: string; color?: string }
     'add-mark': Mark
     'remove-mark': Mark
     'goto-mark': { markId: string }

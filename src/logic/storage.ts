@@ -20,6 +20,7 @@ export interface UpdateMarkNotePayload {
   url: string
   id: Mark['id'] // 使用 Mark 接口中的 id 类型
   note: string
+  color: string
 
   [key: string]: any // 允许对象拥有任何 string 类型的键
 }
@@ -36,5 +37,3 @@ export interface GetMarkByIdPayload {
 
   [key: string]: any // 添加索引签名
 }
-
-export const { data: storageDemo, dataReady: storageDemoReady } = useWebExtensionStorage('webext-demo', 'Storage Demo')

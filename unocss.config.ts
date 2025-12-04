@@ -3,11 +3,29 @@ import { presetAttributify, presetIcons, presetUno, transformerDirectives } from
 
 export default defineConfig({
   presets: [
-    presetUno(),
+    presetUno({
+      unitResolver: (value: any) => {
+        // 如果值是数字，则返回其 px 形式，避免默认的 rem 转换
+        if (typeof value === 'number') {
+          return `${value}px`
+        }
+        return value
+      }
+    }),
     presetAttributify(),
-    presetIcons(),
+    presetIcons()
   ],
-  transformers: [
-    transformerDirectives(),
-  ],
+  transformers: [transformerDirectives()],
+
+  theme: {
+    colors: {
+      brand: {
+        blue: '#4285f4',
+        'blue-dark': '#357ae8',
+        red: '#ea4335',
+        'red-dark': '#e03324'
+      },
+      'border-color': '#dadce0'
+    }
+  }
 })

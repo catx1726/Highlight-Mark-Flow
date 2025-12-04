@@ -2,6 +2,7 @@
 import { onMessage, sendMessage } from 'webext-bridge/background'
 import type { Tabs } from 'webextension-polyfill'
 // src/background/main.ts
+import { toRaw } from 'vue'
 import {
   type Mark,
   marksByUrl,
@@ -10,6 +11,8 @@ import {
   type UpdateMarkNotePayload,
   GetMarkByIdPayload
 } from '~/logic/storage'
+import { CLEANUP_DAYS_THRESHOLD } from '~/logic/config'
+
 // only on dev mode
 if (import.meta.hot) {
   // @ts-expect-error for background HMR
@@ -22,7 +25,8 @@ if (import.meta.hot) {
 const USE_SIDE_PANEL = true
 
 // to toggle the sidepanel with the action button in chromium:
-if (USE_SIDE_PANEL) {
+// @ts-expect-error missing types
+if (USE_SIDE_PANEL && globalThis.browser?.sidePanel) {
   // @ts-expect-error missing types
   browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error: unknown) => console.error(error))
 }
@@ -92,7 +96,11 @@ onMessage('get-marks-for-url', async ({ data }) => {
   await dataReady
   console.log(`[background] Storage is ready. dataReady.value is: ${dataReady}`)
   const { url } = data
-  const result = marksByUrl.value[url] || []
+  const resultProxy = marksByUrl.value[url] || []
+
+  // 优化修正：对数组中的每个元素应用 toRaw，确保返回一个纯净的数组
+  const result = resultProxy.map(toRaw)
+
   console.log(`[background] Returning ${result.length} marks for ${url}`)
   return result
 })
@@ -114,10 +122,28 @@ onMessage<UpdateMarkNotePayload>('update-mark-note', async ({ data }) => {
   }
 })
 
+onMessage<UpdateMarkNotePayload>('update-mark-details', async ({ data }) => {
+  const { url, id, note, color } = data
+  if (marksByUrl.value[url]) {
+    const markToUpdate = marksByUrl.value[url].find((m) => m.id === id)
+    if (markToUpdate) {
+      if (note !== undefined) markToUpdate.note = note
+
+      if (color !== undefined) markToUpdate.color = color
+    }
+  }
+})
+
 onMessage<GetMarkByIdPayload>('get-mark-by-id', async ({ data }) => {
   const { url, id } = data
   if (marksByUrl.value[url]) {
-    return marksByUrl.value[url].find((m) => m.id === id)
+    // 1. 找到响应式对象
+    const markProxy = marksByUrl.value[url].find((m) => m.id === id)
+
+    // 2. 核心修正：返回之前使用 toRaw() 剥离 Proxy
+    if (markProxy) {
+      return toRaw(markProxy) // <-- 使用 toRaw 返回纯 JS 对象
+    }
   }
   return undefined
 })
@@ -176,7 +202,7 @@ onMessage('cleanup-useless-marks', () => {
 })
 
 onMessage<{ tabId: number }>('open-sidepanel', async ({ data }) => {
-  console.log('[vitesse-webext] Opening side panel', data)
+  console.log('[web-marker-extension] Opening side panel', data)
 
   const { tabId } = data
 
@@ -186,22 +212,17 @@ onMessage<{ tabId: number }>('open-sidepanel', async ({ data }) => {
   }
 
   try {
-    // 1. Chrome/Chromium 兼容性检查和调用
     // @ts-expect-error missing types
-
     if (browser.sidePanel && typeof (browser.sidePanel as any).open === 'function') {
-      // Chrome (MV3)
+      // Chrome (MV3) 需要一个 tabId
+      const tabId = data?.tabId
+      if (!tabId) {
+        console.error('Tab ID missing for opening side panel in Chrome.')
+        return { success: false, error: 'Tab ID missing for Chrome' }
+      }
       // @ts-expect-error missing types
       await (browser.sidePanel as any).open({ tabId })
       return { success: true, browser: 'Chrome' }
-    }
-
-    // 2. Firefox 兼容性检查和调用
-    // Firefox 使用 sidebarAction
-    else if (browser.sidebarAction && typeof browser.sidebarAction.open === 'function') {
-      // Firefox 的 open() 不需要 tabId，它会在当前窗口（Popup 所在的窗口）打开
-      await browser.sidebarAction.open()
-      return { success: true, browser: 'Firefox' }
     }
 
     // 3. Fallback
@@ -211,4 +232,18 @@ onMessage<{ tabId: number }>('open-sidepanel', async ({ data }) => {
     // 返回一个明确的错误信息
     return { success: false, error: `API call failed: ${(e as Error).message}` }
   }
+})
+
+onMessage<{ url: string }>('remove-marks-by-url', async ({ data }) => {
+  const { url } = data
+  if (marksByUrl.value[url]) {
+    delete marksByUrl.value[url]
+  }
+})
+
+/**
+ * 当扩展首次安装时，自动打开配置页面。
+ */
+browser.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install') browser.runtime.openOptionsPage()
 })

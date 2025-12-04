@@ -1,12 +1,13 @@
 html,
 body,
 #app {
+  font-size: 16px;
   margin: 0;
   padding: 0;
 }
 
 .btn {
-  @apply px-4 py-1 rounded inline-block
+  @apply px-[16px] py-[4px] rounded inline-block
     bg-teal-600 text-white cursor-pointer
     hover:bg-teal-700
     disabled:cursor-default disabled:bg-gray-600 disabled:opacity-50;
@@ -17,4 +18,8 @@ body,
     opacity-75 transition duration-200 ease-in-out
     hover:opacity-100 hover:text-teal-600;
   font-size: 0.9em;
+}
+
+.btn-secondary {
+  @apply px-[16px] py-2 rounded-md bg-gray-200 text-gray-800 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600;
 }

@@ -15,9 +15,7 @@ const [show, toggle] = useToggle(false)
       transition="opacity duration-300"
       :class="show ? 'opacity-100' : 'opacity-0'"
     >
-      <h1 class="text-lg">
-        Vitesse WebExt
-      </h1>
+      <h1 class="text-[18px]">Highlight Keeper</h1>
       <SharedSubtitle />
     </div>
     <button
@@ -25,7 +23,7 @@ const [show, toggle] = useToggle(false)
       bg="teal-600 hover:teal-700"
       @click="toggle()"
     >
-      <pixelarticons-power class="block m-auto text-white text-lg" />
+      <pixelarticons-power class="block m-auto text-white text-[18px]" />
     </button>
   </div>
 </template>
