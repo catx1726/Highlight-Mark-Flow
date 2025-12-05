@@ -91,8 +91,8 @@ const formatShortcutForDisplay = (shortcut: string) => {
   let text = shortcut
   if (isMac) {
     text = text
-      .replace(/meta|cmd|command/gi, '⌃') // Control on Mac
-      .replace(/ctrl|control/gi, '⌘') // Command on Mac
+      .replace(/meta|cmd|command/gi, '⌘') // Command on Mac
+      .replace(/ctrl|control/gi, '⌃') // Control on Mac
       .replace(/alt/gi, '⌥')
       .replace(/shift/gi, '⇧')
   }
@@ -156,16 +156,22 @@ const handleKeydown = (event: KeyboardEvent) => {
   }
 
   const match = (shortcut: ReturnType<typeof formatShortcut>) => {
-    if (event.key.toLowerCase() !== shortcut.key) return false
+    // On Mac, the Option (Alt) key often changes event.key to a special character.
+    // For single-letter shortcuts, it's more reliable to check event.code.
+    // For example, Option+S on Mac produces event.key: 'ß', but event.code: 'KeyS'.
+    const keyMatches =
+      isMac && shortcut.alt && shortcut.key.length === 1 && shortcut.key >= 'a' && shortcut.key <= 'z'
+        ? event.code.toLowerCase() === `key${shortcut.key}`
+        : event.key.toLowerCase() === shortcut.key
+
+    if (!keyMatches) return false
     if (event.altKey !== shortcut.alt) return false
     if (event.shiftKey !== shortcut.shift) return false
-    // 将 'Ctrl' 映射到 Mac 上的 'Command' 键
-    const primaryModifier = isMac ? event.metaKey : event.ctrlKey
-    if (shortcut.ctrl !== primaryModifier) return false
 
-    // 将 'Meta' 映射到 Mac 上的 'Control' 键
-    const secondaryModifier = isMac ? event.ctrlKey : event.metaKey
-    if (shortcut.meta !== secondaryModifier) return false
+    // - 'meta' in settings maps to Command key (event.metaKey) on Mac.
+    // - 'ctrl' in settings maps to Control key (event.ctrlKey) on all platforms.
+    if (shortcut.meta !== event.metaKey) return false
+    if (shortcut.ctrl !== event.ctrlKey) return false
 
     return true
   }

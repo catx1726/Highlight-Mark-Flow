@@ -283,7 +283,7 @@ function exportToMarkdown(urlMarks: Mark[], pageTitle: string) {
                 title="删除此页面的所有标记"
                 @click="removeAllMarksForUrl(url)"
               >
-                全部删除
+                删除
               </button>
             </div>
           </header>

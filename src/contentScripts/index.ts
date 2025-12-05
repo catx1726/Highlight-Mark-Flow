@@ -189,6 +189,8 @@ function handleClearPreview() {
 // #region --- Event Listeners & Handlers ---
 
 function handleMouseDown(event: MouseEvent) {
+  clearTimeout(debounceTimer)
+
   const target = event.target as HTMLElement
   const tagName = target.tagName
 
