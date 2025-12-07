@@ -60,7 +60,7 @@ export async function getManifest() {
     ;(manifest as any).browser_specific_settings = {
       gecko: {
         // 请保留您的唯一 ID
-        id: 'highlight-mark-flow@flow.soulboy.site',
+        id: 'new-highlight-mark-flow@flow.soulboy.site',
         strict_min_version: '109.0',
         // 关键修正：数据收集权限声明
         data_collection_permissions: {
