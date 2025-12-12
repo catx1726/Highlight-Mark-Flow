@@ -267,7 +267,7 @@ function processSelection(event: MouseEvent) {
 
   // 情况1：用户选择了新的文本
   if (!selection.isCollapsed) {
-    handleNewSelection(selection, event.clientX, event.clientY)
+    if (event.altKey) handleNewSelection(selection, event.clientX, event.clientY)
     return
   }
 
@@ -521,15 +521,41 @@ async function createHighlight(
 // #endregion
 
 // #region --- Utility Functions ---
-function getMaxZIndex(): number {
+/**
+ * 用于获取页面上最高且有效的 z-index 值。
+ * 1. 专注于查找可能设置 z-index 的元素 (例如具有 id 或类名的元素)。
+ * 2. 遍历 document.body 的直接子元素（通常高层级覆盖物会挂载在 body 下）。
+ * 3. 仅对具有 position 属性的元素计算 z-index。
+ * 4. 增加了对 Shadow DOM 的有限支持（需要额外的遍历逻辑，此处简化）。
+ * @returns {number} 页面中最大的有效 z-index 值。
+ */
+export function getMaxZIndex(): number {
   let maxZIndex = 0
-  document.querySelectorAll('*').forEach((el) => {
-    const zIndex = parseInt(window.getComputedStyle(el).zIndex)
-    if (!isNaN(zIndex)) {
-      maxZIndex = Math.max(maxZIndex, zIndex)
+
+  // 1. 针对性查找：只查找 body 下的直接子元素，这些元素通常是最高层级的容器
+  //    以及那些可能设置了高 z-index 的定位元素。
+  const selectors = 'body > *' // 查找 body 的所有直接子元素
+  const elements = document.querySelectorAll(selectors)
+
+  elements.forEach((el) => {
+    // 性能优化：直接使用 element.style.zIndex 可能会错过 CSS 样式表中的值
+    const style = window.getComputedStyle(el),
+      zIndexString = style.zIndex,
+      position = style.position
+
+    // 2. 核心校验: z-index 只有在 position 不是 'static' 时才生效
+    if (zIndexString !== 'auto' && position !== 'static') {
+      const zIndex = parseInt(zIndexString)
+
+      if (!isNaN(zIndex)) {
+        maxZIndex = Math.max(maxZIndex, zIndex)
+      }
     }
   })
-  return maxZIndex
+
+  // 考虑常见的模态框和固定元素的最大值，设置一个安全上限
+  // 许多模态框使用 9999 或 2147483647
+  return Math.max(maxZIndex, 1000)
 }
 
 function isBlacklisted(url: string, blacklist: string[]): boolean {

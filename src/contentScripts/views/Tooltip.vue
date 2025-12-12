@@ -1,8 +1,9 @@
 <template>
   <div
     v-if="visible"
-    class="tooltip-card fixed z-max w-[300px] rounded-lg bg-white p-[12px] font-sans shadow-lg"
-    :style="{ top: `${position.y}px`, left: `${position.x}px` }"
+    class="tooltip-card fixed z-max w-[300px] rounded-lg bg-white p-[12px] font-sans shadow-lg dark:border dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+    :style="{ top: `${position.y}px`, left: `${position.x}px`, 'z-index': zIndex }"
+    :class="{ dark: isDark }"
     @mousedown.stop
   >
     <div class="tooltip-content flex flex-col gap-[12px]">
@@ -10,23 +11,23 @@
         <button
           v-for="color in highlightColors"
           :key="color"
-          class="color-swatch h-[20px] w-[20px] cursor-pointer rounded-full border-[2px] border-transparent p-0 transition-all duration-200 ease-in-out transform hover:scale-110 hover:translate-y-[-0.25rem] hover:z-20 relative"
+          class="color-swatch h-[20px] w-[20px] cursor-pointer rounded-full border-[2px] border-transparent p-0 transition-all duration-200 ease-in-out transform hover:scale-110 hover:translate-y-[-0.25rem] hover:z-20 relative dark:border-gray-800"
           :style="{ backgroundColor: color }"
-          :class="{ 'is-selected !border-brand-blue': selectedColor === color }"
+          :class="{ 'is-selected !border-brand-blue dark:!border-blue-400': selectedColor === color }"
           @click="selectedColor = color"
         />
       </div>
       <textarea
         ref="textareaRef"
         v-model="noteValue"
-        class="tooltip-textarea min-h-[60px] min-w-[250px] resize-y rounded-md border border-gray-300 p-[8px] text-[14px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+        class="tooltip-textarea min-h-[60px] min-w-[250px] resize-y rounded-md border border-gray-300 p-[8px] text-[14px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200 dark:placeholder-gray-400 dark:focus:border-blue-400 dark:focus:ring-blue-400"
         placeholder="你正在想什么..."
         @keydown.enter.prevent="onSaveClick"
         @keydown.esc="hide"
       />
       <div class="tooltip-actions flex justify-end w-full gap-[8px]">
         <button
-          class="action-button copy-button p-[4px] text-gray-400 hover:text-blue-600 rounded-full"
+          class="action-button copy-button p-[4px] text-gray-400 hover:text-blue-600 rounded-full dark:hover:text-blue-400"
           title="复制文本"
           @click="onCopyClick"
         >
@@ -63,7 +64,7 @@
           删除 ({{ shortcutDeleteText }})
         </button>
         <button
-          class="action-button save-button rounded-md bg-blue-600 px-[12px] py-[6px] text-[14px] font-medium text-white hover:bg-blue-700"
+          class="action-button save-button rounded-md bg-blue-600 px-[12px] py-[6px] text-[14px] font-medium text-white hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600"
           @click="onSaveClick"
         >
           确认 ({{ shortcutSaveText }})
@@ -76,6 +77,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { settings } from '~/logic/settings'
+import { getMaxZIndex } from '..'
+import { usePreferredDark } from '@vueuse/core'
+
+const isDark = usePreferredDark()
 
 const visible = ref(false)
 const position = reactive({ x: 0, y: 0 })
@@ -100,7 +105,8 @@ const formatShortcutForDisplay = (shortcut: string) => {
 }
 const shortcutSaveText = computed(() => formatShortcutForDisplay(settings.value.shortcutSave))
 const shortcutDeleteText = computed(() => formatShortcutForDisplay(settings.value.shortcutDelete))
-const isMac = /mac/i.test(navigator.platform)
+const isMac = /mac/i.test(navigator.platform),
+  zIndex = getMaxZIndex() + 1
 
 const emit = defineEmits<{
   (e: 'save', note: string, color: string): void

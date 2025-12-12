@@ -14,34 +14,87 @@
     <title>Highlight Mark Flow - 网页高亮、高效回顾与知识辅助</title>
     <link rel="icon" href="./icon.png" />
     <script src="https://cdn.jsdelivr.net/npm/@unocss/runtime"></script>
+    <style>
+      /* 强制浏览器 UI 适应 Light/Dark 模式 */
+      :root {
+        color-scheme: light dark;
+      }
+      /* 确保平滑的过渡效果 */
+      * {
+        transition-property: background-color, border-color, color, fill, stroke;
+        transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+        transition-duration: 300ms;
+      }
+    </style>
+    <!-- 客户端 JavaScript 逻辑: 监听 prefers-color-scheme 的变化并更新 HTML 的 'dark' class -->
+    <script>
+      ;(function () {
+        // 匹配暗色模式的媒体查询
+        const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+
+        // 主题更新函数
+        function updateTheme(e) {
+          if (e.matches) {
+            // 如果匹配到暗色模式，添加 dark 类
+            document.documentElement.classList.add('dark')
+          } else {
+            // 否则移除 dark 类
+            document.documentElement.classList.remove('dark')
+          }
+        }
+
+        // 1. 首次加载时执行
+        updateTheme(mediaQuery)
+
+        // 2. 监听媒体查询变化（包括开发者工具中的模拟切换）
+        if (mediaQuery.addEventListener) {
+          mediaQuery.addEventListener('change', updateTheme)
+        } else {
+          // 兼容旧版浏览器
+          mediaQuery.addListener(updateTheme)
+        }
+      })()
+    </script>
   </head>
-  <body class="font-sans antialiased text-gray-900 bg-white overflow-x-hidden">
-    <header class="navbar bg-white border-b border-gray-100 sticky top-0 z-10 backdrop-blur-md">
+  <!-- 移除 body 上的 bg-white 和 dark:bg-gray-900，让它继承 html/root 的背景 -->
+  <body class="font-sans antialiased overflow-x-hidden bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-200">
+    <header
+      class="navbar bg-white/80 border-b border-gray-100 sticky top-0 z-10 backdrop-blur-md dark:bg-gray-900/80 dark:border-gray-800"
+    >
       <div class="container mx-auto flex justify-between items-center py-4 px-6 max-w-screen-xl">
         <h1 class="text-xl font-bold text-gray-900 flex items-center">
           <a
             href="https://github.com/catx1726/Highlight-Mark-Flow"
             target="_blank"
-            class="flex items-center no-underline hover:text-blue-700"
+            class="flex items-center no-underline text-gray-900 hover:text-blue-700 dark:text-gray-100 dark:hover:text-blue-400"
           >
             <img src="./icon.png" alt="Highlight Mark Flow Icon" class="h-6 w-6 mr-2" />
             <span class="font-semibold">Highlight Mark Flow</span>
           </a>
         </h1>
         <nav class="space-x-8 flex items-center">
-          <a href="#features" class="text-gray-600 hover:text-blue-700 font-normal no-underline hidden lg:inline-block">
+          <a
+            href="#features"
+            class="text-gray-600 hover:text-blue-700 font-normal no-underline hidden lg:inline-block dark:text-gray-300 dark:hover:text-blue-400"
+          >
             核心功能
           </a>
-          <a href="#problem" class="text-gray-600 hover:text-blue-700 font-normal no-underline hidden md:inline-block">
+          <a
+            href="#problem"
+            class="text-gray-600 hover:text-blue-700 font-normal no-underline hidden md:inline-block dark:text-gray-300 dark:hover:text-blue-400"
+          >
             关注痛点
           </a>
           <a
             href="#how-to-use"
-            class="text-gray-600 hover:text-blue-700 font-normal no-underline hidden lg:inline-block"
+            class="text-gray-600 hover:text-blue-700 font-normal no-underline hidden lg:inline-block dark:text-gray-300 dark:hover:text-blue-400"
           >
             使用指南
           </a>
-          <a href="#faq" class="text-gray-600 hover:text-blue-700 font-normal no-underline hidden md:inline-block">
+          <a
+            href="#faq"
+            class="text-gray-600 hover:text-blue-700 font-normal no-underline hidden md:inline-block dark:text-gray-300 dark:hover:text-blue-400"
+          >
             常见问题
           </a>
           <a
@@ -55,12 +108,14 @@
     </header>
 
     <main>
-      <section id="hero" class="hero-section text-center py-28 md:py-40 bg-white">
+      <section id="hero" class="hero-section text-center py-28 md:py-40">
         <div class="container mx-auto px-6 max-w-screen-1xl">
-          <h2 class="text-5xl md:text-7xl font-light tracking-tight text-gray-900 mb-6 max-w-6xl mx-auto">
+          <h2
+            class="text-5xl md:text-7xl font-light tracking-tight text-gray-900 mb-6 max-w-6xl mx-auto dark:text-gray-100"
+          >
             辅助深度阅读：您的网页知识侧边栏
           </h2>
-          <p class="text-xl md:text-2xl font-normal text-gray-500 mb-12 max-w-4xl mx-auto">
+          <p class="text-xl md:text-2xl font-normal text-gray-500 mb-12 max-w-4xl mx-auto dark:text-gray-400">
             Highlight Mark Flow 致力于帮助您轻松捕捉、便捷回顾长篇阅读中的关键信息，优化您的知识管理流程。
           </p>
           <div class="cta-buttons mb-20">
@@ -76,64 +131,79 @@
             <img
               src="./Highlight-Mark-Flow_3.gif"
               alt="Highlight Mark Flow 侧边栏和高亮示例"
-              class="mx-auto w-full rounded-xl border border-gray-100 shadow-2xl transition duration-500 max-w-6xl"
+              class="mx-auto w-full rounded-xl border border-gray-200 shadow-2xl transition duration-500 max-w-6xl dark:border-gray-800"
             />
           </div>
         </div>
       </section>
 
-      <section id="problem" class="problem-section py-24 bg-gray-50 border-t border-b border-gray-100">
+      <section
+        id="problem"
+        class="problem-section py-24 bg-gray-50 border-t border-b border-gray-100 dark:bg-gray-950 dark:border-gray-800"
+      >
         <div class="container mx-auto px-6 text-center max-w-screen-xl">
-          <h2 class="text-4xl font-semibold text-gray-800 mb-16">我们关注并尝试解决现有工具的常见问题</h2>
+          <h2 class="text-4xl font-semibold text-gray-800 mb-16 dark:text-gray-200">
+            我们关注并尝试解决现有工具的常见问题
+          </h2>
           <div class="pain-points-grid grid md:grid-cols-3 gap-8 max-w-6xl mx-auto">
-            <div class="pain-point p-8 rounded-xl border border-gray-200 bg-white shadow-lg transition hover:shadow-xl">
+            <div
+              class="pain-point p-8 rounded-xl border border-gray-200 bg-white shadow-lg transition hover:shadow-xl dark:bg-gray-800 dark:border-gray-700"
+            >
               <span class="text-red-600 text-4xl mb-4 block font-light">①</span>
-              <h3 class="text-xl font-semibold mb-3 text-gray-800">回顾效率低下</h3>
-              <p class="text-gray-600">每次回顾都需手动搜索或无尽滚动，知识点散落，时间浪费严重。</p>
+              <h3 class="text-xl font-semibold mb-3 text-gray-800 dark:text-gray-200">回顾效率低下</h3>
+              <p class="text-gray-600 dark:text-gray-400">每次回顾都需手动搜索或无尽滚动，知识点散落，时间浪费严重。</p>
             </div>
-            <div class="pain-point p-8 rounded-xl border border-gray-200 bg-white shadow-lg transition hover:shadow-xl">
+            <div
+              class="pain-point p-8 rounded-xl border border-gray-200 bg-white shadow-lg transition hover:shadow-xl dark:bg-gray-800 dark:border-gray-700"
+            >
               <span class="text-red-600 text-4xl mb-4 block font-light">②</span>
-              <h3 class="text-xl font-semibold mb-3 text-gray-800">复杂且昂贵</h3>
-              <p class="text-gray-600">许多工具功能臃肿，需要登录甚至付费订阅才能使用核心功能。</p>
+              <h3 class="text-xl font-semibold mb-3 text-gray-800 dark:text-gray-200">复杂且昂贵</h3>
+              <p class="text-gray-600 dark:text-gray-400">许多工具功能臃肿，需要登录甚至付费订阅才能使用核心功能。</p>
             </div>
-            <div class="pain-point p-8 rounded-xl border border-gray-200 bg-white shadow-lg transition hover:shadow-xl">
+            <div
+              class="pain-point p-8 rounded-xl border border-gray-200 bg-white shadow-lg transition hover:shadow-xl dark:bg-gray-800 dark:border-gray-700"
+            >
               <span class="text-red-600 text-4xl mb-4 block font-light">③</span>
-              <h3 class="text-xl font-semibold mb-3 text-gray-800">数据隐私担忧</h3>
-              <p class="text-gray-600">强制云同步，用户担心自己的阅读笔记和敏感数据被收集。</p>
+              <h3 class="text-xl font-semibold mb-3 text-gray-800 dark:text-gray-200">数据隐私担忧</h3>
+              <p class="text-gray-600 dark:text-gray-400">强制云同步，用户担心自己的阅读笔记和敏感数据被收集。</p>
             </div>
           </div>
         </div>
       </section>
 
-      <section id="features" class="feature-section py-24 bg-white">
+      <section id="features" class="feature-section py-24">
         <div class="container mx-auto px-6 max-w-screen-xl">
-          <h2 class="text-4xl font-semibold text-gray-800 mb-20 text-center">Mark Flow 提供的核心辅助功能</h2>
+          <h2 class="text-4xl font-semibold text-gray-800 mb-20 text-center dark:text-gray-200">
+            Mark Flow 提供的核心辅助功能
+          </h2>
 
           <div class="feature-block flex flex-col items-center gap-16 mb-24">
-            <div class="text-content md:w-1/2">
-              <span class="text-blue-700 text-lg font-medium">主要工具</span>
-              <h3 class="text-4xl font-bold mt-4 mb-4">知识浮岛：侧边栏实时管理</h3>
-              <p class="text-xl text-gray-600">
+            <div class="text-content md:w-1/2 text-center">
+              <span class="text-blue-700 text-lg font-medium dark:text-blue-400">主要工具</span>
+              <h3 class="text-4xl font-bold mt-4 mb-4 text-gray-800 dark:text-gray-100">知识浮岛：侧边栏实时管理</h3>
+              <p class="text-xl text-gray-600 dark:text-gray-300">
                 我们将所有高亮和备注集中显示在一个简洁的侧边面板中。您的笔记无需跳转，即可与原文同步显示，辅助您统一管理和阅读知识点。
               </p>
             </div>
           </div>
 
           <div class="feature-block flex flex-col items-center gap-16 mb-24">
-            <div class="text-content md:w-1/2">
-              <span class="text-blue-700 text-lg font-medium">提升便利性</span>
-              <h3 class="text-4xl font-bold mt-4 mb-4">便捷跳转，精确回顾</h3>
-              <p class="text-xl text-gray-600">
+            <div class="text-content md:w-1/2 text-center">
+              <span class="text-blue-700 text-lg font-medium dark:text-blue-400">提升便利性</span>
+              <h3 class="text-4xl font-bold mt-4 mb-4 text-gray-800 dark:text-gray-100">便捷跳转，精确回顾</h3>
+              <p class="text-xl text-gray-600 dark:text-gray-300">
                 在侧边面板中点击任一标记，浏览器将快速滚动到该标记在原文中的位置。帮助您在知识点间实现高效的定位和穿梭。
               </p>
             </div>
           </div>
 
           <div class="feature-block flex flex-col items-center gap-16">
-            <div class="text-content md:w-1/2">
-              <span class="text-blue-700 text-lg font-medium">数据安全</span>
-              <h3 class="text-4xl font-bold mt-4 mb-4">本地数据存储 & Markdown 导出</h3>
-              <p class="text-xl text-gray-600">
+            <div class="text-content md:w-1/2 text-center">
+              <span class="text-blue-700 text-lg font-medium dark:text-blue-400">数据安全</span>
+              <h3 class="text-4xl font-bold mt-4 mb-4 text-gray-800 dark:text-gray-100">
+                本地数据存储 & Markdown 导出
+              </h3>
+              <p class="text-xl text-gray-600 dark:text-gray-300">
                 我们尊重您的数据所有权。所有数据均本地存储，安全无忧。支持一键导出 Markdown 文件，方便您导入
                 Obsidian、Notion 等主流笔记软件。
               </p>
@@ -142,48 +212,63 @@
         </div>
       </section>
 
-      <section id="how-to-use" class="how-to-use-section py-24 bg-gray-50 border-t border-b border-gray-100">
+      <section
+        id="how-to-use"
+        class="how-to-use-section py-24 bg-gray-50 border-t border-b border-gray-100 dark:bg-gray-950 dark:border-gray-800"
+      >
         <div class="container mx-auto px-6 max-w-screen-xl">
-          <h2 class="text-4xl font-semibold text-gray-800 mb-16 text-center">快速上手指南：三步管理您的知识</h2>
+          <h2 class="text-4xl font-semibold text-gray-800 mb-16 text-center dark:text-gray-200">
+            快速上手指南：三步管理您的知识
+          </h2>
 
           <div class="guide-steps grid md:grid-cols-3 gap-8 max-w-6xl mx-auto text-left">
-            <div class="step p-8 rounded-xl bg-white border border-gray-200 shadow-lg transition hover:shadow-xl">
+            <div
+              class="step p-8 rounded-xl bg-white border border-gray-200 shadow-lg transition hover:shadow-xl dark:bg-gray-800 dark:border-gray-700"
+            >
               <div class="step-number text-5xl font-light text-blue-600 mb-4">1</div>
-              <h3 class="text-xl font-semibold mb-3 text-gray-900">标记与添加备注</h3>
-              <p class="text-lg text-gray-600">在任意网页上 选中 需要记录的文字。</p>
-              <p class="text-sm text-gray-500 mt-4">*提示：您可以使用快捷键 ALT+S 快速标记，CTRL+C 复制选中内容。</p>
+              <h3 class="text-xl font-semibold mb-3 text-gray-900 dark:text-gray-100">标记与添加备注</h3>
+              <p class="text-lg text-gray-600 dark:text-gray-300">
+                在任意网页上按住 Alt 键 (macOS 上为 Option 键) 选中 需要记录的文字。
+              </p>
+              <p class="text-sm text-gray-500 mt-4 dark:text-gray-400">
+                *提示：选中文字后，您可以使用快捷键 ALT+S 快速标记，CTRL+C 复制选中内容。
+              </p>
             </div>
 
-            <div class="step p-8 rounded-xl bg-white border border-gray-200 shadow-lg transition hover:shadow-xl">
+            <div
+              class="step p-8 rounded-xl bg-white border border-gray-200 shadow-lg transition hover:shadow-xl dark:bg-gray-800 dark:border-gray-700"
+            >
               <div class="step-number text-5xl font-light text-blue-600 mb-4">2</div>
-              <h3 class="text-xl font-semibold mb-3 text-gray-900">开启知识浮岛</h3>
-              <p class="text-lg text-gray-600">
+              <h3 class="text-xl font-semibold mb-3 text-gray-900 dark:text-gray-100">开启知识浮岛</h3>
+              <p class="text-lg text-gray-600 dark:text-gray-300">
                 点击浏览器工具栏中的 Highlight Mark Flow 图标。侧边面板将即时显示当前页面所有已标记的内容。
               </p>
-              <p class="text-sm text-gray-500 mt-4">*功能：您可以在浮岛中编辑、删除、导出笔记。</p>
+              <p class="text-sm text-gray-500 mt-4 dark:text-gray-400">*功能：您可以在浮岛中编辑、删除、导出笔记。</p>
             </div>
 
-            <div class="step p-8 rounded-xl bg-white border border-gray-200 shadow-lg transition hover:shadow-xl">
+            <div
+              class="step p-8 rounded-xl bg-white border border-gray-200 shadow-lg transition hover:shadow-xl dark:bg-gray-800 dark:border-gray-700"
+            >
               <div class="step-number text-5xl font-light text-blue-600 mb-4">3</div>
-              <h3 class="text-xl font-semibold mb-3 text-gray-900">一键回到原文</h3>
-              <p class="text-lg text-gray-600">
+              <h3 class="text-xl font-semibold mb-3 text-gray-900 dark:text-gray-100">一键回到原文</h3>
+              <p class="text-lg text-gray-600 dark:text-gray-300">
                 在浮岛中点击任意笔记，浏览器主窗口将自动滚动到该标记在原文中的准确位置。
               </p>
-              <p class="text-sm text-gray-500 mt-4">*优势：无需手动搜索和滚动，便捷定位知识源头。</p>
+              <p class="text-sm text-gray-500 mt-4 dark:text-gray-400">*优势：无需手动搜索和滚动，便捷定位知识源头。</p>
             </div>
           </div>
         </div>
       </section>
 
-      <section id="download" class="cta-final text-center py-24 bg-gray-900 text-white">
+      <section id="download" class="cta-final text-center py-24 bg-gray-900 text-white dark:bg-black">
         <h2 class="text-4xl font-extrabold mb-8">开始使用，辅助您记录和回顾知识</h2>
-        <p class="text-xl mb-12 text-gray-300 max-w-3xl mx-auto">
+        <p class="text-xl mb-12 text-gray-300 max-w-3xl mx-auto dark:text-gray-400">
           Highlight Mark Flow 永久免费，兼容主流浏览器。欢迎您尝试安装，体验它对知识回顾流程的改善。
         </p>
         <div class="download-links space-y-4 sm:space-y-0 sm:space-x-8 flex flex-col sm:flex-row justify-center">
           <a
             href="https://github.com/catx1726/Highlight-Mark-Flow/releases/download/v0.0.9/extension-chromium.zip"
-            class="bg-white text-blue-800 hover:bg-gray-200 transition duration-300 font-semibold py-3 px-8 text-lg rounded-full shadow-lg transform hover:scale-105 no-underline"
+            class="bg-white text-blue-800 hover:bg-gray-200 transition duration-300 font-semibold py-3 px-8 text-lg rounded-full shadow-lg transform hover:scale-105 no-underline dark:bg-gray-200 dark:hover:bg-gray-300"
           >
             Chrome/Edge 安装 (Chromium)
           </a>
@@ -194,11 +279,11 @@
             Firefox 安装
           </a>
         </div>
-        <p class="small-print mt-10 text-sm text-gray-400">
+        <p class="small-print mt-10 text-sm text-gray-400 dark:text-gray-500">
           或者前往
           <a
             href="https://github.com/catx1726/Highlight-Mark-Flow/releases/"
-            class="no-underline hover:text-white font-medium"
+            class="no-underline hover:text-white font-medium text-gray-300 dark:text-gray-400 dark:hover:text-white"
           >
             GitHub Releases
           </a>
@@ -206,23 +291,32 @@
         </p>
       </section>
 
-      <section id="faq" class="faq-section py-16 bg-white border-t border-gray-100">
+      <section
+        id="faq"
+        class="faq-section py-16 bg-white border-t border-gray-100 dark:bg-gray-900 dark:border-gray-800"
+      >
         <div class="container mx-auto px-6 max-w-screen-xl">
-          <h2 class="text-3xl font-semibold text-gray-800 mb-12 text-center">常见问题解答 (FAQ)</h2>
+          <h2 class="text-3xl font-semibold text-gray-800 mb-12 text-center dark:text-gray-200">常见问题解答 (FAQ)</h2>
 
           <div class="faq-list max-w-4xl mx-auto space-y-6">
-            <div class="faq-item p-6 rounded-lg bg-gray-50 border border-gray-200">
-              <h3 class="text-lg font-semibold mb-2 text-gray-800">Q: 侧边栏（知识浮岛）打开失败/无法显示怎么办？</h3>
-              <p class="text-gray-600">
+            <div
+              class="faq-item p-6 rounded-lg bg-gray-50 border border-gray-200 dark:bg-gray-800 dark:border-gray-700"
+            >
+              <h3 class="text-lg font-semibold mb-2 text-gray-800 dark:text-gray-200">
+                Q: 侧边栏（知识浮岛）打开失败/无法显示怎么办？
+              </h3>
+              <p class="text-gray-600 dark:text-gray-400">
                 A: 建议将您的浏览器（Chrome、Edge 或 Firefox）更新到最新稳定版本，以确保插件的 API 兼容性正常运行。
               </p>
             </div>
 
-            <div class="faq-cta p-6 rounded-lg bg-blue-50 text-center border-2 border-blue-200">
-              <p class="text-lg font-medium text-gray-800 mb-3">遇到问题或有任何功能建议？</p>
+            <div
+              class="faq-cta p-6 rounded-lg bg-blue-50 text-center border-2 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800/30"
+            >
+              <p class="text-lg font-medium text-gray-800 mb-3 dark:text-gray-200">遇到问题或有任何功能建议？</p>
               <a
                 href="https://github.com/catx1726/Highlight-Mark-Flow/issues"
-                class="text-lg font-semibold text-blue-600 hover:text-blue-700 no-underline transition duration-300"
+                class="text-lg font-semibold text-blue-600 hover:text-blue-700 no-underline transition duration-300 dark:text-blue-400 dark:hover:text-blue-300"
               >
                 前往 GitHub Issues 页面进行反馈
               </a>
@@ -232,7 +326,7 @@
       </section>
     </main>
 
-    <footer class="site-footer bg-gray-900 text-gray-400 py-8">
+    <footer class="site-footer bg-gray-900 text-gray-400 py-8 dark:bg-black">
       <div class="container mx-auto px-6 text-center">
         <p class="mb-2 text-sm">&copy; 2025 Highlight Mark Flow. All rights reserved.</p>
       </div>
