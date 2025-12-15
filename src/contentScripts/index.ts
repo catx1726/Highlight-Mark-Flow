@@ -482,19 +482,19 @@ async function createHighlight(
   note?: string,
   color: string = settings.value.defaultHighlightColor
 ) {
-  const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
-  const className = `webext-highlight-${uniqueId}`
-
-  const applier = rangy.createClassApplier(className, {
-    elementTagName: 'span',
-    elementAttributes: {
-      style: highlightDefaultStyle(color)
-    }
-  })
-
-  // 序列化选区，用于之后恢复和取消高亮
-  const rangySerialized = rangy.serializeSelection(selection, true)
-  const selectedText = selection.toString()
+  const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+    className = `webext-highlight-${uniqueId}`,
+    applier = rangy.createClassApplier(className, {
+      elementTagName: 'span',
+      elementAttributes: {
+        style: highlightDefaultStyle(color)
+      }
+    }),
+    // 序列化选区，用于之后恢复和取消高亮
+    rangySerialized = rangy.serializeSelection(selection, true),
+    selectedText = selection.toString(),
+    // 获取结构化上下文
+    { contextTitle, contextSelector, contextLevel, contextOrder } = getHighlightContext(selection)
 
   // 应用高亮
   applier.applyToSelection()
@@ -511,11 +511,70 @@ async function createHighlight(
     color,
     rangySerialized,
     createdAt: Date.now(),
-    title: document.title
+    title: document.title,
+    contextTitle,
+    contextSelector,
+    contextLevel,
+    contextOrder
   }
 
   // 通过 webext-bridge 将新标记发送到背景脚本进行存储
   await sendMessage('add-mark', markData, 'background')
+}
+
+/**
+ * 获取高亮选区的上下文（最近的上级标题）
+ * @param selection - Rangy 选区对象
+ * @returns 返回包含标题文本、选择器和级别的对象
+ */
+function getHighlightContext(selection: RangySelection): {
+  contextTitle: string
+  contextSelector: string
+  contextLevel: number
+  contextOrder: number
+} {
+  const range = selection.getRangeAt(0),
+    // Use the start of the range as the reference point.
+    startNode = range.startContainer,
+    startElement = (startNode.nodeType === Node.ELEMENT_NODE ? startNode : startNode.parentNode) as HTMLElement | null,
+    allHeadings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+  let lastHeadingBeforeSelection: HTMLElement | null = null
+
+  for (const heading of allHeadings) {
+    // Node.DOCUMENT_POSITION_FOLLOWING means `startElement` is after `heading`.
+    // We want the last heading that comes before our selection.
+    if (startElement && heading.compareDocumentPosition(startElement) & Node.DOCUMENT_POSITION_FOLLOWING) {
+      lastHeadingBeforeSelection = heading as HTMLElement
+    } else {
+      // Once we find a heading that is after our selection, we can stop.
+      // The one we found in the previous iteration is the correct one.
+      break
+    }
+  }
+
+  const heading = lastHeadingBeforeSelection
+  if (heading) {
+    const tagName = heading.tagName.toLowerCase(),
+      level = parseInt(tagName.replace('h', ''), 10),
+      headingsOfSameLevel = Array.from(document.querySelectorAll(tagName)),
+      index = headingsOfSameLevel.indexOf(heading),
+      documentOrderIndex = allHeadings.indexOf(heading) // 这就是标题在文档中的顺序
+
+    return {
+      contextTitle: heading.textContent?.trim() || '无标题章节',
+      contextSelector: `${tagName}:nth-of-type(${index + 1})`,
+      contextLevel: level,
+      contextOrder: documentOrderIndex
+    }
+  }
+
+  // 如果没有找到标题，则返回默认值
+  return {
+    contextTitle: '未分类笔记',
+    contextSelector: 'body',
+    contextLevel: 1,
+    contextOrder: -1 // 未分类笔记排在最前面
+  }
 }
 
 // #endregion
@@ -739,6 +798,22 @@ onMessage('remove-mark', async ({ data: markToRemove }) => {
   if (!markToRemove || !markToRemove.id) return
 
   await removeMarkById(markToRemove.id)
+})
+
+onMessage('goto-chapter', ({ data }) => {
+  const { selector } = data
+  const element = document.querySelector(selector)
+  if (element) {
+    element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // 给目标元素一个短暂的闪烁效果以提示用户
+    if (element instanceof HTMLElement) {
+      element.style.transition = 'outline 0.1s ease-in-out'
+      element.style.outline = '3px solid #3B82F6'
+      setTimeout(() => {
+        element.style.outline = ''
+      }, 1500)
+    }
+  }
 })
 
 // #endregion

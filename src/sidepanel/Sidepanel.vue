@@ -1,27 +1,187 @@
 <!-- src/sidepanel/Sidepanel.vue -->
 <script setup lang="ts">
 import { sendMessage } from 'webext-bridge/popup'
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, toRaw } from 'vue'
 import { CLEANUP_DAYS_THRESHOLD } from '~/logic/config'
 import type { Mark } from '~/logic/storage'
 import { marksByUrl } from '~/logic/storage'
 
-const editingMarkId = ref<string | null>(null)
-const editingNote = ref('')
-const currentEditingRef = ref<HTMLTextAreaElement | null>(null)
-const copiedMarkId = ref<string | null>(null)
+const editingMarkId = ref<string | null>(null),
+  editingNote = ref(''),
+  currentEditingRef = ref<HTMLTextAreaElement | null>(null),
+  copiedMarkId = ref<string | null>(null),
+  storageUsage = ref(0),
+  storageQuota = ref(0),
+  storageUsagePercent = computed(() => {
+    if (!storageQuota.value) return 0
+    return (storageUsage.value / storageQuota.value) * 100
+  }),
+  expandedTexts = ref<Set<string>>(new Set()),
+  expandedNotes = ref<Set<string>>(new Set()),
+  activeMarkMenu = ref<string | null>(null),
+  activeUrlMenu = ref<string | null>(null)
 
-const storageUsage = ref(0)
-const storageQuota = ref(0)
+onMounted(() => {
+  getStorageUsage()
+  document.addEventListener('click', closeMenus)
+})
 
-const storageUsagePercent = computed(() => {
-  if (!storageQuota.value) return 0
-  return (storageUsage.value / storageQuota.value) * 100
+onUnmounted(() => {
+  document.removeEventListener('click', closeMenus)
 })
 
 onMounted(() => {
   getStorageUsage()
 })
+
+// --- 结构化回顾功能 ---
+
+interface MarkGroup {
+  title: string
+  level: number
+  selector: string
+  marks: Mark[]
+  count: number
+  order: number // 分组的排序依据
+}
+
+// State for collapsing groups and URLs
+const collapsedStates = ref<Record<string, Record<string, boolean>>>({}),
+  collapsedUrls = ref<Record<string, boolean>>({}),
+  structuredMarks = computed(() => {
+    const result: Record<string, { pageTitle: string; groups: MarkGroup[]; totalMarks: number }> = {}
+    for (const [url, marks] of Object.entries(marksByUrl.value)) {
+      if (!marks || marks.length === 0) continue
+
+      const pageTitle = getPageTitle(marks)
+      const groups: Record<string, MarkGroup> = {}
+
+      for (const mark of marks) {
+        const contextTitle = mark.contextTitle || '未分类笔记',
+          contextLevel = mark.contextLevel || 7,
+          contextSelector = mark.contextSelector || 'body',
+          contextOrder = mark.contextOrder ?? -1 // 获取顺序，默认为-1,
+
+        if (!groups[contextTitle]) {
+          groups[contextTitle] = {
+            title: contextTitle,
+            level: contextLevel,
+            selector: contextSelector,
+            marks: [],
+            count: 0,
+            order: contextOrder
+          }
+        }
+        groups[contextTitle].marks.push(mark)
+      }
+
+      // 按创建时间排序每个分组内的笔记
+      for (const group of Object.values(groups)) {
+        group.marks.sort((a, b) => a.createdAt - b.createdAt)
+        group.count = group.marks.length
+      }
+
+      // 按分组在文档中出现的物理顺序排序
+      const sortedGroups = Object.values(groups).sort((a, b) => a.order - b.order)
+
+      result[url] = { pageTitle, groups: sortedGroups, totalMarks: marks.length }
+    }
+    return result
+  })
+
+function toggleUrlCollapse(url: string) {
+  collapsedUrls.value[url] = !isUrlCollapsed(url)
+}
+
+function isUrlCollapsed(url: string): boolean {
+  // 默认不折叠
+  return !!collapsedUrls.value[url]
+}
+
+async function gotoChapter(selector: string, url: string) {
+  const allTabs = await browser.tabs.query({ currentWindow: true })
+  const targetUrl = getNormalizedUrlForTabMatching(url)
+
+  const tab = allTabs.find((t) => {
+    if (!t.url) return false
+    try {
+      return getNormalizedUrlForTabMatching(t.url) === targetUrl
+    } catch (e) {
+      return false
+    }
+  })
+
+  if (tab?.id) {
+    await browser.tabs.update(tab.id, { active: true })
+    sendMessage('goto-chapter', { selector }, { context: 'content-script', tabId: tab.id })
+  } else {
+    await browser.tabs.create({ url, active: true })
+  }
+}
+
+function toggleGroup(url: string, groupTitle: string, totalMarks: number) {
+  if (!collapsedStates.value[url]) collapsedStates.value[url] = {}
+  collapsedStates.value[url][groupTitle] = !isGroupCollapsed(url, groupTitle, totalMarks)
+}
+
+function isGroupCollapsed(url: string, groupTitle: string, totalMarks: number): boolean {
+  const state = collapsedStates.value[url]?.[groupTitle]
+  if (state !== undefined) return state
+  return totalMarks > 15
+}
+
+function getLevelClass(level: number) {
+  const levelStyles: Record<number, string> = {
+    1: 'text-base font-bold text-gray-900 dark:text-gray-100',
+    2: 'text-base font-semibold text-gray-800 dark:text-gray-200',
+    3: 'text-sm font-semibold text-gray-700 dark:text-gray-300',
+    4: 'text-sm font-medium text-gray-600 dark:text-gray-400',
+    5: 'text-sm font-medium text-gray-600 dark:text-gray-400',
+    6: 'text-sm font-medium text-gray-600 dark:text-gray-400'
+  }
+  // 为“未分类笔记”提供默认样式
+  return levelStyles[level] || 'text-sm font-medium text-gray-500 dark:text-gray-500'
+}
+
+function getLevelBorderStyle(level: number) {
+  const styles: Record<number, object> = {
+    1: { borderLeft: '6px solid #000000' },
+    2: { borderLeft: '4px solid #000000' },
+    3: { borderLeft: '2px solid #000000' },
+    4: { borderLeft: '1px solid #000000' },
+    5: { borderLeft: '1px solid #000000' },
+    6: { borderLeft: '1px solid #000000' }
+  }
+  // 为“未分类笔记”提供默认样式
+  return styles[level] || { borderLeft: '1px solid #000000' }
+}
+
+// --- End of 结构化回顾功能 ---
+
+function toggleUrlMenu(url: string) {
+  activeUrlMenu.value = activeUrlMenu.value === url ? null : url
+}
+
+function toggleTextExpansion(markId: string) {
+  if (expandedTexts.value.has(markId)) expandedTexts.value.delete(markId)
+  else expandedTexts.value.add(markId)
+  closeMenus()
+}
+
+function toggleNoteExpansion(markId: string) {
+  if (expandedNotes.value.has(markId)) expandedNotes.value.delete(markId)
+  else expandedNotes.value.add(markId)
+  closeMenus()
+}
+
+function toggleMarkMenu(markId: string) {
+  activeMarkMenu.value = activeMarkMenu.value === markId ? null : markId
+}
+
+function closeMenus() {
+  activeMarkMenu.value = null
+  activeUrlMenu.value = null
+}
 
 async function removeAllMarksForUrl(url: string) {
   if (confirm(`确定要删除此页面下的所有标记吗？此操作不可撤销。`)) {
@@ -29,6 +189,8 @@ async function removeAllMarksForUrl(url: string) {
     // 删除后，广播刷新以更新所有内容脚本
     await broadcastRefresh()
   }
+
+  closeMenus()
 }
 
 function openOptionsPage() {
@@ -39,6 +201,9 @@ async function copyMarkText(mark: Mark) {
   try {
     await navigator.clipboard.writeText('引文：' + mark.text + '\n' + '备注：' + mark.note)
     copiedMarkId.value = mark.id
+
+    closeMenus() // 复制后关闭菜单
+
     setTimeout(() => {
       copiedMarkId.value = null
     }, 2000)
@@ -164,6 +329,8 @@ async function removeMark(mark: Mark) {
 
   // 2. 发送给 Content Script
   if (tab?.id) sendMessage('remove-mark', rawMark, { context: 'content-script', tabId: tab.id })
+
+  closeMenus()
 }
 
 async function getStorageUsage() {
@@ -212,6 +379,8 @@ function exportToMarkdown(urlMarks: Mark[], pageTitle: string) {
   a.download = `${safeFileName}.md`
   a.click()
   URL.revokeObjectURL(url)
+
+  closeMenus()
 }
 </script>
 
@@ -259,120 +428,273 @@ function exportToMarkdown(urlMarks: Mark[], pageTitle: string) {
           />
         </svg>
         <p class="mt-[16px]">还没有任何标记</p>
-        <p class="text-[14px] text-gray-400">在网页上选中文本试试看</p>
+        <p class="text-[14px] text-gray-400">在网页上按住ALT，然后选中文本试试看</p>
       </div>
       <div v-else>
         <section
-          v-for="[url, urlMarks] in Object.entries(marksByUrl)"
+          v-for="[url, urlData] in Object.entries(structuredMarks)"
           :key="url"
           class="bg-white rounded-lg shadow-md p-[16px] mb-[16px]"
         >
-          <header class="flex justify-between items-center pb-[8px] mb-[8px] border-b border-gray-200">
-            <h2 class="text-base font-semibold text-gray-700 truncate flex-1 min-w-0" :title="url">
-              {{ getPageTitle(urlMarks) }}
-            </h2>
-            <div class="flex items-center gap-[8px]">
-              <button
-                class="action-button rounded-md bg-gray-200 px-[12px] py-[4px] text-xs font-medium text-gray-700 hover:bg-gray-300"
-                @click="exportToMarkdown(urlMarks, getPageTitle(urlMarks))"
+          <header
+            class="flex justify-between items-center pb-[8px] mb-[8px] border-b border-gray-200 cursor-pointer group/page"
+            @click="toggleUrlCollapse(url)"
+          >
+            <div class="flex items-center gap-2 flex-1 min-w-0">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="h-[16px] w-[16px] flex-shrink-0 text-gray-400 group-hover/page:text-gray-600 transition-transform duration-200"
+                :class="{ 'rotate-[-90deg]': isUrlCollapsed(url) }"
+                viewBox="0 0 20 20"
+                fill="currentColor"
               >
-                导出
+                <path
+                  fill-rule="evenodd"
+                  d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+              <h2 class="text-base font-semibold text-gray-700 truncate" :title="url">
+                {{ urlData.pageTitle }}
+              </h2>
+            </div>
+            <div class="relative flex-shrink-0" @click.stop>
+              <button class="p-1 text-gray-500 hover:text-gray-800 rounded-full" @click="toggleUrlMenu(url)">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path
+                    d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"
+                  />
+                </svg>
               </button>
-              <button
-                class="action-button rounded-md bg-red-100 px-[12px] py-[4px] text-xs font-medium text-red-700 hover:bg-red-200"
-                title="删除此页面的所有标记"
-                @click="removeAllMarksForUrl(url)"
+              <div
+                v-if="activeUrlMenu === url"
+                class="absolute right-0 mt-2 w-32 bg-white rounded-md shadow-lg z-20 border border-gray-200"
               >
-                删除
-              </button>
+                <ul class="py-1">
+                  <li>
+                    <button
+                      class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                      @click="
+                        exportToMarkdown(
+                          Object.values(urlData.groups).flatMap((g) => g.marks),
+                          urlData.pageTitle
+                        )
+                      "
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        class="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                        />
+                      </svg>
+                      <span>导出</span>
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                      @click="removeAllMarksForUrl(url)"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        class="h-4 w-4"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                      <span>清空</span>
+                    </button>
+                  </li>
+                </ul>
+              </div>
             </div>
           </header>
-          <ul class="space-y-2">
-            <li v-for="mark in urlMarks" :key="mark.id" class="group">
-              <div class="flex items-start justify-between">
-                <div class="flex-1 cursor-pointer" @click="gotoMark(mark)">
-                  <p class="text-[14px] font-medium text-gray-800">
-                    {{ mark.text }}
-                  </p>
-                  <div v-if="editingMarkId === mark.id" class="mt-[8px]">
-                    <textarea
-                      v-model="editingNote"
-                      :ref="setEditingRef"
-                      class="w-full border-gray-300 rounded-md p-[8px] text-[14px] focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                      @keydown.enter.prevent="saveNote(mark)"
-                      @keydown.esc="cancelEdit"
-                    />
-                    <div class="flex justify-end gap-[8px] mt-[8px]">
-                      <button
-                        class="action-button rounded-md bg-gray-200 px-[12px] py-[4px].5 text-[14px] font-medium text-gray-800 hover:bg-gray-300"
-                        @click.stop="cancelEdit"
+          <div v-if="!isUrlCollapsed(url)">
+            <div v-for="group in urlData.groups" :key="group.title" class="group-container mt-1">
+              <header
+                class="group-header flex justify-between items-center py-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 -mx-2 px-2 transition-colors"
+                :style="getLevelBorderStyle(group.level)"
+                @click="toggleGroup(url, group.title, urlData.totalMarks)"
+              >
+                <h3 class="flex-1 min-w-0 truncate" :class="getLevelClass(group.level)">
+                  {{ group.title }}
+                  <span class="font-normal text-gray-400 text-sm">({{ group.count }})</span>
+                </h3>
+              </header>
+
+              <ul v-if="!isGroupCollapsed(url, group.title, urlData.totalMarks)" class="space-y-3 pt-2 pl-3">
+                <li v-for="mark in group.marks" :key="mark.id" class="group flex items-start gap-2 relative">
+                  <div
+                    class="color-indicator w-1 h-[20px] rounded-full flex-shrink-0"
+                    :style="{ backgroundColor: mark.color }"
+                  ></div>
+                  <div class="flex-1 min-w-0">
+                    <div class="cursor-pointer" @click="gotoMark(mark)">
+                      <p
+                        class="text-sm font-medium text-gray-800 dark:text-gray-200 overflow-hidden transition-all duration-300 ease-in-out"
+                        :class="expandedTexts.has(mark.id) ? 'max-h-96' : 'max-h-5'"
+                        :title="mark.text"
                       >
-                        取消
-                      </button>
-                      <button
-                        class="action-button rounded-md bg-blue-600 px-[12px] py-[4px].5 text-[14px] font-medium text-white hover:bg-blue-700"
-                        @click.stop="saveNote(mark)"
-                      >
-                        保存
-                      </button>
+                        {{ mark.text }}
+                      </p>
                     </div>
-                  </div>
-                  <p v-else class="text-[14px] text-gray-500 mt-[4px] hover:text-blue-600" @click.stop="editMark(mark)">
-                    {{ mark.note.length > 0 ? mark.note : '点击添加备注...' }}
-                  </p>
-                </div>
-                <div class="flex items-center ml-[8px] space-x-1 flex-shrink-0">
-                  <button
-                    class="p-[4px] text-gray-400 hover:text-blue-600 rounded-full"
-                    title="复制文本"
-                    @click.stop="copyMarkText(mark)"
-                  >
-                    <svg
-                      v-if="copiedMarkId === mark.id"
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="w-[20px] h-[20px] text-green-500 transition-colors"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                    <svg
+                    <div v-if="editingMarkId === mark.id" class="mt-2">
+                      <textarea
+                        v-model="editingNote"
+                        :ref="setEditingRef"
+                        class="w-full border-gray-300 rounded-md p-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:border-gray-600"
+                        @keydown.enter.prevent="saveNote(mark)"
+                        @keydown.esc="cancelEdit"
+                      ></textarea>
+                      <div class="flex justify-end gap-2 mt-2">
+                        <button
+                          class="action-button rounded-md bg-gray-200 px-3 py-1 text-sm font-medium text-gray-800 hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500"
+                          @click.stop="cancelEdit"
+                        >
+                          取消
+                        </button>
+                        <button
+                          class="action-button rounded-md bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700"
+                          @click.stop="saveNote(mark)"
+                        >
+                          保存
+                        </button>
+                      </div>
+                    </div>
+                    <p
                       v-else
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="w-[20px] h-[20px]"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
+                      :title="mark.note"
+                      class="text-sm text-gray-500 mt-1 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 cursor-pointer overflow-hidden transition-all duration-300 ease-in-out"
+                      :class="expandedNotes.has(mark.id) ? 'max-h-96' : 'max-h-5'"
+                      @click.stop="editMark(mark)"
                     >
-                      <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
-                      <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" />
-                    </svg>
-                  </button>
-                  <button
-                    class="p-[4px] text-gray-400 hover:text-red-600 rounded-full transition-colors"
-                    title="删除标记"
-                    @click="removeMark(mark)"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      class="w-[20px] h-[20px]"
-                      viewBox="0 0 20 20"
-                      fill="currentColor"
+                      {{ mark.note || '点击添加备注...' }}
+                    </p>
+                  </div>
+                  <div class="relative flex-shrink-0">
+                    <button
+                      class="p-1 text-gray-400 hover:text-gray-600 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                      title="更多操作"
+                      @click.stop="toggleMarkMenu(mark.id)"
                     >
-                      <path
-                        fill-rule="evenodd"
-                        d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </li>
-          </ul>
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path
+                          d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"
+                        />
+                      </svg>
+                    </button>
+                    <transition name="fade-scale">
+                      <div
+                        v-if="activeMarkMenu === mark.id"
+                        class="absolute right-0 mt-2 w-40 bg-white rounded-md shadow-lg z-10 border border-gray-200"
+                        @click.stop
+                      >
+                        <ul class="py-1 text-sm">
+                          <li>
+                            <button
+                              class="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                              @click="toggleTextExpansion(mark.id)"
+                            >
+                              <span>{{ expandedTexts.has(mark.id) ? '收起引文' : '展开引文' }}</span>
+                            </button>
+                          </li>
+                          <li v-if="mark.note">
+                            <button
+                              class="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                              @click="toggleNoteExpansion(mark.id)"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="h-4 w-4"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                              >
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M4 8V4m0 0h4M4 4l5 5m11-1V8m0 0h-4m4 0l-5-5M4 16v4m0 0h4m-4 0l5-5m11 1v-4m0 0h-4m4 0l-5 5"
+                                />
+                              </svg>
+                              <span>{{ expandedNotes.has(mark.id) ? '收起备注' : '展开备注' }}</span>
+                            </button>
+                          </li>
+                          <div class="my-1 border-t border-gray-100"></div>
+                          <li>
+                            <button
+                              class="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                              @click="copyMarkText(mark)"
+                            >
+                              <svg
+                                v-if="copiedMarkId === mark.id"
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="w-4 h-4 text-green-500"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                              >
+                                <path
+                                  fill-rule="evenodd"
+                                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                                  clip-rule="evenodd"
+                                />
+                              </svg>
+                              <svg
+                                v-else
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="w-4 h-4"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                              >
+                                <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+                                <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h6a2 2 0 00-2-2H5z" />
+                              </svg>
+                              <span>复制</span>
+                            </button>
+                          </li>
+                          <li>
+                            <button
+                              class="w-full text-left px-4 py-2 text-red-600 hover:bg-red-50 flex items-center gap-2"
+                              @click="removeMark(mark)"
+                            >
+                              <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                class="w-4 h-4"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                              >
+                                <path
+                                  fill-rule="evenodd"
+                                  d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
+                                  clip-rule="evenodd"
+                                />
+                              </svg>
+                              <span>删除</span>
+                            </button>
+                          </li>
+                        </ul>
+                      </div>
+                    </transition>
+                  </div>
+                </li>
+              </ul>
+            </div>
+          </div>
         </section>
       </div>
     </div>
@@ -406,3 +728,28 @@ function exportToMarkdown(urlMarks: Mark[], pageTitle: string) {
     </div>
   </main>
 </template>
+<style>
+.fade-scale-enter-active,
+.fade-scale-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.fade-scale-enter-from,
+.fade-scale-leave-to {
+  opacity: 0;
+  transform: scale(0.95) translateY(-10px);
+  transform-origin: top right;
+}
+
+.slide-fade-enter-active {
+  transition: all 0.2s ease-out;
+}
+.slide-fade-leave-active {
+  transition: all 0.2s cubic-bezier(1, 0.5, 0.8, 1);
+}
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  transform: translateY(-10px);
+  opacity: 0;
+  max-height: 0;
+}
+</style>

@@ -14,6 +14,11 @@ export interface Mark {
   rangySerialized: string // Rangy 序列化后的选区字符串
   createdAt: number // 创建时间戳
   title?: string // 网页 tab 名称
+  // 结构化回顾新增字段
+  contextTitle?: string // 最近的上级标题文本
+  contextSelector?: string // 最近的上级标题的 CSS 选择器
+  contextLevel?: number // 最近的上级标题级别 (h1=1, h6=6)
+  contextOrder?: number // 新增：标题在文档中的顺序索引
 }
 
 export interface UpdateMarkNotePayload {
