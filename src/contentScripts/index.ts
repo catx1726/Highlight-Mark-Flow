@@ -501,7 +501,14 @@ async function createHighlight(
     rangySerialized = rangy.serializeSelection(selection, true),
     selectedText = selection.toString(),
     // 获取结构化上下文
-    { contextTitle, contextSelector, contextLevel, contextOrder } = getHighlightContext(selection)
+    { contextTitle, contextSelector, contextLevel, contextOrder } = getHighlightContext(selection),
+    range = selection.getRangeAt(0),
+    content = range.cloneContents(),
+    tempDiv = document.createElement('div')
+
+  tempDiv.appendChild(content)
+
+  const selectedHtml = range.cloneContents().constructor === DocumentFragment ? tempDiv.innerHTML : range.toString()
 
   // 应用高亮
   applier.applyToSelection()
@@ -514,6 +521,7 @@ async function createHighlight(
     id: uniqueId,
     url: getCanonicalUrlForMark(),
     text: selectedText,
+    html: selectedHtml,
     note: note || '',
     color,
     rangySerialized,

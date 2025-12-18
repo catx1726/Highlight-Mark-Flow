@@ -374,9 +374,15 @@ function exportToMarkdown(urlData: { pageTitle: string; groups: MarkGroup[] }) {
     markdown += `${heading} ${group.title}\n\n`
 
     for (const mark of group.marks) {
-      markdown += `> ${mark.text.replace(/>/g, '\\>')}\n\n`
-      if (mark.note) markdown += `${mark.note}\n\n`
-      markdown += `---\n\n` // Use a more subtle separator within a chapter
+      if (mark.html) {
+        // 如果有 HTML 内容，直接使用它
+        markdown += `${mark.html}\n\n`
+      } else {
+        // 否则，回退到纯文本并使用 Markdown 引用
+        markdown += `> ${mark.text.replace(/>/g, '\\>')}\n\n`
+      }
+      if (mark.note) markdown += `**备注**：${mark.note}\n\n`
+      markdown += `***\n\n`
     }
   }
 
@@ -555,13 +561,11 @@ function exportToMarkdown(urlData: { pageTitle: string; groups: MarkGroup[] }) {
                   ></div>
                   <div class="flex-1 min-w-0">
                     <div class="cursor-pointer" @click="gotoMark(mark)">
-                      <p
-                        class="text-sm font-medium text-gray-800 dark:text-gray-200 overflow-hidden transition-all duration-300 ease-in-out"
+                      <div
+                        class="rich-text-content text-sm font-medium max-w-none text-gray-800 dark:text-gray-200 overflow-hidden transition-all duration-300 ease-in-out"
                         :class="expandedTexts.has(mark.id) ? 'max-h-96' : 'max-h-5'"
-                        :title="mark.text"
-                      >
-                        {{ mark.text }}
-                      </p>
+                        v-html="mark.html || mark.text"
+                      ></div>
                     </div>
                     <div v-if="editingMarkId === mark.id" class="mt-2">
                       <textarea
@@ -749,5 +753,58 @@ function exportToMarkdown(urlData: { pageTitle: string; groups: MarkGroup[] }) {
   transform: translateY(-10px);
   opacity: 0;
   max-height: 0;
+}
+
+.rich-text-content :where(p, ul, ol, pre, blockquote) {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.rich-text-content > *:not(:first-child) {
+  margin-top: 0.5rem;
+}
+
+.rich-text-content :where(ul, ol) {
+  padding-left: 1.25rem;
+}
+
+.rich-text-content :where(code):not(pre *) {
+  font-size: 0.875em;
+  background-color: #f3f4f6;
+  color: #111827;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-weight: 400;
+}
+
+.dark .rich-text-content :where(code):not(pre *) {
+  background-color: #374151;
+  color: #f9fafb;
+}
+
+.rich-text-content :where(pre) {
+  background-color: #f3f4f6;
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  overflow-x: auto;
+  font-size: 0.875em;
+}
+
+.dark .rich-text-content :where(pre) {
+  background-color: #1f2937;
+}
+
+.rich-text-content :where(pre code) {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  font-weight: inherit;
+}
+.rich-text-content :where(strong, b) {
+  font-weight: 600;
+}
+.rich-text-content :where(em, i) {
+  font-style: italic;
 }
 </style>
