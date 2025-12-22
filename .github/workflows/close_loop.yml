@@ -3,7 +3,10 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
-
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
 jobs:
   comment-on-issue:
     if: github.event.pull_request.merged == true
