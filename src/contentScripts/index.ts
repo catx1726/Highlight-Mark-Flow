@@ -28,7 +28,9 @@ interface TooltipInstance {
 // 用于跟踪已成功恢复到页面上的标记，避免重复操作
 const restoredMarkIds = new Set<string>()
 
-let debounceTimer: number,
+let tooltipDebounceTimer: number,
+  restoreDebounceTimer: number,
+  selectionTimer: number,
   tooltipApp: TooltipInstance | null,
   currentSelection: RangySelection | null = null,
   currentSerializationRoot: Node | undefined,
@@ -179,6 +181,21 @@ function setupShadowDOMAndTooltip(): TooltipInstance {
 }
 
 /**
+ * 确保 Tooltip 容器已挂载且具有正确的 z-index。
+ * 这解决了在单页应用（SPA）中，因 DOM 重绘导致 Tooltip 容器被移除的问题。
+ */
+function ensureTooltipMounted() {
+  const container = document.getElementById(__NAME__)
+  if (!container) {
+    console.log('[WebMarker] ensureTooltipMounted: Container NOT found, remounting...')
+    tooltipApp = setupShadowDOMAndTooltip()
+  } else {
+    console.log('[WebMarker] ensureTooltipMounted: Container found, updating z-index')
+    container.style.zIndex = `${getMaxZIndex() + 1}`
+  }
+}
+
+/**
  * 处理页面初始加载时的操作，恢复高亮并滚动到指定标记
  */
 async function handleInitialLoadActions() {
@@ -256,7 +273,7 @@ function handleClearPreview() {
 // #region --- Event Listeners & Handlers ---
 
 function handleMouseDown(event: MouseEvent) {
-  clearTimeout(debounceTimer)
+  clearTimeout(tooltipDebounceTimer)
 
   const target = event.target as HTMLElement,
     tagName = target.tagName
@@ -311,7 +328,9 @@ function handleMouseUp(event: MouseEvent) {
     clientY: event.clientY,
     altKey: event.altKey
   }
-  setTimeout(() => processSelection(eventSnapshot), 50)
+  console.log('[WebMarker] handleMouseUp: scheduling processSelection')
+  clearTimeout(selectionTimer)
+  selectionTimer = window.setTimeout(() => processSelection(eventSnapshot), 50)
 }
 
 // #endregion
@@ -322,6 +341,7 @@ function handleMouseUp(event: MouseEvent) {
  * 处理用户选择或点击操作
  */
 function processSelection(event: { target: EventTarget | null; clientX: number; clientY: number; altKey: boolean }) {
+  console.log('[WebMarker] processSelection started')
   const selection = rangy.getSelection(),
     targetNode = event.target as Node
 
@@ -372,6 +392,14 @@ function processSelection(event: { target: EventTarget | null; clientX: number; 
         capturedRoot = root
       }
       capturedSerialized = rangy.serializeSelection(selection, true, capturedRoot)
+      if (root instanceof ShadowRoot) {
+        console.log('[WebMarker] Shadow DOM Selection Detected:', {
+          selection: selection.toString(),
+          rangeCount: selection.rangeCount,
+          serialized: capturedSerialized,
+          root: root
+        })
+      }
       capturedText = selection.toString()
     } catch (e) {
       // 忽略序列化错误
@@ -382,6 +410,7 @@ function processSelection(event: { target: EventTarget | null; clientX: number; 
       currentSerializationRoot = capturedRoot
       currentMarkIdForColorChange = null
 
+      // console.log('[WebMarker] Applying preview to selection...')
       // 直接应用预览高亮到当前选区，避免反序列化可能导致的问题（特别是在 Shadow DOM 全选时）
       previewApplier?.applyToSelection()
       showTooltipForSelection(event.clientX, event.clientY, capturedText)
@@ -442,6 +471,8 @@ function handleExistingMarkClick(markElement: HTMLElement, x: number, y: number)
  * 为已存在的高亮标记显示工具提示
  */
 async function showTooltipForExistingMark(markId: string, x: number, y: number) {
+  ensureTooltipMounted()
+
   // 当点击一个标记时调用此函数。此时 `serializedSelection` 已被设置。
   const mark = await sendMessage('get-mark-by-id', { id: markId, url: getCanonicalUrlForMark() }, 'background'),
     note = mark ? mark.note : '',
@@ -453,9 +484,10 @@ async function showTooltipForExistingMark(markId: string, x: number, y: number) 
  * 为新的文本选择显示工具提示
  */
 function showTooltipForSelection(x: number, y: number, textToCopy: string) {
+  console.log('[WebMarker] showTooltipForSelection: scheduling _showTooltipForSelection')
   // 使用 clearTimeout 和 setTimeout 实现防抖
-  clearTimeout(debounceTimer)
-  debounceTimer = window.setTimeout(() => {
+  clearTimeout(tooltipDebounceTimer)
+  tooltipDebounceTimer = window.setTimeout(() => {
     _showTooltipForSelection(x, y, textToCopy)
   }, 50)
 }
@@ -467,6 +499,9 @@ function showTooltipForSelection(x: number, y: number, textToCopy: string) {
  * @param textToCopy
  */
 function _showTooltipForSelection(x: number, y: number, textToCopy: string) {
+  console.log('[WebMarker] _showTooltipForSelection: executing')
+  ensureTooltipMounted()
+
   // 对于新选区，我们处于“创建”模式，isHighlighted 应为 false，这样“删除”按钮就不会显示。
   const isHighlighted = false,
     note = ''
@@ -535,10 +570,13 @@ async function handleSaveAction(note: string, color: string) {
     if (!serializedSelection) return
 
     try {
+      // console.log('[WebMarker] Saving new highlight...', { serializedSelection, currentSerializationRoot })
+
       const win =
         currentSerializationRoot instanceof ShadowRoot ? currentSerializationRoot.ownerDocument.defaultView : window
       rangy.deserializeSelection(serializedSelection, currentSerializationRoot, win || window)
       const selection = rangy.getSelection()
+      // console.log('[WebMarker] Deserialized selection:', selection)
       if (selection && !selection.isCollapsed) await createHighlight(selection.getRangeAt(0), note, color)
     } catch (e) {
       console.error('Error during save action (create):', e)
@@ -608,6 +646,7 @@ async function createHighlight(
   const uniqueId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
   const className = `webext-highlight-${uniqueId}`
 
+  // console.log('[WebMarker] Creating highlight with class:', className)
   const applier = rangy.createClassApplier(className, {
     elementTagName: 'span',
     elementAttributes: {
@@ -642,6 +681,8 @@ async function createHighlight(
   tempDiv.appendChild(content)
 
   const selectedHtml = content.constructor === DocumentFragment ? tempDiv.innerHTML : selectedText
+
+  // console.log('[WebMarker] Applying highlight to range:', rangyRange)
 
   // 3. 应用高亮：使用转换后的 rangyRange
   applier.applyToRange(rangyRange)
@@ -848,7 +889,7 @@ function isBlacklisted(url: string, blacklist: string[]): boolean {
 
 async function scrollToMark(markId: string) {
   // 在滚动前清除任何待定的恢复操作，以防止它们在滚动动画期间改变布局
-  clearTimeout(debounceTimer)
+  clearTimeout(restoreDebounceTimer)
 
   const className = `webext-highlight-${markId}`
   const element = querySelectorDeep(`.${className}`)
@@ -937,8 +978,8 @@ async function restoreHighlights() {
  * 防抖函数，用于在 DOM 稳定一小段时间后再次尝试恢复高亮
  */
 function debouncedRestore() {
-  clearTimeout(debounceTimer)
-  debounceTimer = window.setTimeout(async () => {
+  clearTimeout(restoreDebounceTimer)
+  restoreDebounceTimer = window.setTimeout(async () => {
     const canonicalUrl = getCanonicalUrlForMark(),
       marks = await sendMessage('get-marks-for-url', { url: canonicalUrl }, 'background')
     if (!marks) return
@@ -966,7 +1007,7 @@ function applyMarks(marks: Mark[]) {
     // 如果标记数据中包含 shadowHostSelector，说明它位于 Shadow DOM 中
     if (mark.shadowHostSelector) {
       let host: Element | null = null
-
+      // console.log('[WebMarker] Restoring Shadow DOM mark:', mark.id, mark.shadowHostSelector)
       // 支持新的链式选择器，解决嵌套 Shadow DOM 的定位歧义问题
       if (mark.shadowHostSelector.includes('|>>>|')) {
         const chain = mark.shadowHostSelector.split('|>>>|')
@@ -997,6 +1038,7 @@ function applyMarks(marks: Mark[]) {
     try {
       // 关键改动：反序列化时传入正确的根节点（默认为 document）
       const range = rangy.deserializeRange(mark.rangySerialized, deserializationRoot, document)
+      // console.log('[WebMarker] Deserialized range for restore:', range)
       applier.applyToRange(range)
       // rangy.getSelection().removeAllRanges() // 不再需要清除选区，因为我们没有操作全局选区
       // 如果成功，记录下来，不再重复尝试
