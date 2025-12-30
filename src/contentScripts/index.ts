@@ -79,7 +79,8 @@ async function initialize() {
 
   previewApplier = rangy.createClassApplier('webext-highlight-preview', {
     elementTagName: 'span',
-    elementAttributes: { style: `${highlightDefaultStyle(settings.value.defaultHighlightColor)} ` }
+    elementAttributes: { style: `${highlightDefaultStyle(settings.value.defaultHighlightColor)} ` },
+    normalize: false // Prevent rangy from merging text nodes, which can invalidate serialized selections
   })
 
   tooltipApp = setupShadowDOMAndTooltip()
@@ -244,9 +245,9 @@ function handleColorChange(color: string, isExisting: boolean) {
 
       try {
         // 关键修复：为反序列化提供正确的文档上下文（shadowRoot 或 document）
-        const win =
-          currentSerializationRoot instanceof ShadowRoot ? currentSerializationRoot.ownerDocument.defaultView : window
-        rangy.deserializeSelection(serializedSelection, currentSerializationRoot, win || window)
+        const root = currentSerializationRoot || document.documentElement
+        const win = root instanceof ShadowRoot ? root.ownerDocument.defaultView : window
+        rangy.deserializeSelection(serializedSelection, root, win || window)
         // 将新的预览高亮应用到已恢复的全局选区上
         previewApplier.applyToSelection()
       } catch (e) {
@@ -324,109 +325,159 @@ function handleMouseUp(event: MouseEvent) {
   // 关键修复：同步捕获 target，避免在 setTimeout 中因事件冒泡/重定向导致 target 变为 Shadow Host
   const eventSnapshot = {
     target,
+    path: typeof event.composedPath === 'function' ? event.composedPath() : [target],
     clientX: event.clientX,
     clientY: event.clientY,
-    altKey: event.altKey
+    altKey: event.altKey,
+    detail: event.detail
   }
-  console.log('[WebMarker] handleMouseUp: scheduling processSelection')
+  console.log(`[WebMarker] handleMouseUp: scheduling processSelection ${event.detail}`)
   clearTimeout(selectionTimer)
-  selectionTimer = window.setTimeout(() => processSelection(eventSnapshot), 50)
+  selectionTimer = window.setTimeout(() => processSelection(eventSnapshot), 50) // 50ms is a good balance
 }
 
 // #endregion
 
 // #region --- Selection Processing & Tooltip ---
+/**
+ * 从给定节点开始，向上查找并返回第一个块级（block-level）父元素。
+ * 这对于确定用户意图选择的整个段落或内容块至关重要。
+ * @param node - 开始查找的 DOM 节点。
+ * @returns 找到的块级 HTMLElement，如果找不到则回退到原始节点。
+ */
+function findContainingBlock(node: Node): HTMLElement {
+  let current: Node | null = node.nodeType === Node.TEXT_NODE ? node.parentNode : (node as HTMLElement)
+  while (current) {
+    if (current.nodeType === Node.ELEMENT_NODE) {
+      const display = window.getComputedStyle(current as Element).display
+      if (display === 'block' || display === 'list-item' || display.startsWith('table')) return current as HTMLElement
+    }
+    // 如果我们遇到了 Shadow Root 的边界，那么包含块就是当前节点本身（它是 Shadow Host 的子节点）。
+    if (current.parentNode instanceof ShadowRoot) return current as HTMLElement
+
+    current = current.parentNode
+  }
+  return node as HTMLElement // Fallback
+}
 
 /**
  * 处理用户选择或点击操作
  */
-function processSelection(event: { target: EventTarget | null; clientX: number; clientY: number; altKey: boolean }) {
+function processSelection(event: {
+  target: EventTarget | null
+  path: EventTarget[]
+  clientX: number
+  clientY: number
+  altKey: boolean
+  detail: number
+}) {
   console.log('[WebMarker] processSelection started')
-  const selection = rangy.getSelection(),
-    targetNode = event.target as Node
+  const initialSelection = rangy.getSelection()
+  const targetNode = event.target as Node
 
-  // 当事件监听器在 `document` 上，而事件源自 Shadow DOM 内部时，`event.target` 会被重定向为宿主元素 (host)。
-  // 这个检查可以识别出这种情况。
-  // 如果是这种情况，并且是一次点击（而不是文本选择），我们直接返回。
-  // 这是因为我们附加到该 Shadow Root 上的、更具体的监听器会正确处理这个事件。
-  // 这样做可以防止 `document` 级别的监听器错误地处理事件（例如，将对高亮的点击误判为空白区域点击），
-  // 从而避免它调用 `tooltipApp?.hide()` 并意外隐藏由 `shadowRoot` 监听器正确显示的 Tooltip。
-  if (targetNode instanceof Element && targetNode.shadowRoot && selection.isCollapsed) {
+  const targetElement = (
+    targetNode.nodeType === Node.ELEMENT_NODE ? targetNode : targetNode.parentNode
+  ) as HTMLElement | null
+  const markElement = targetElement?.closest('span[class*="webext-highlight-"]') as HTMLElement | null
+
+  const isNewSelectionAction = (event.altKey || event.detail >= 3) && !initialSelection.isCollapsed
+
+  if (isNewSelectionAction) {
+    console.log(`[WebMarker] New selection action detected (alt=${event.altKey}, detail=${event.detail}).`)
+
+    // 1. 清理 DOM。这会移除旧的预览并合并文本节点，但可能会破坏当前的浏览器选区。
+    console.log('[WebMarker] Clearing old preview to get a clean DOM state.')
+    clearPreviewHighlight()
+
+    let range: rangy.RangyRange | null = null
+
+    // 2. 为新操作获取权威的 range。
+    // 对于 Shadow DOM 中的三击，我们需要特殊处理来重建 range，因为 getSelection() 在这里不可靠。
+    if (event.detail >= 3) {
+      const shadowRoot = event.path.find((node) => node instanceof ShadowRoot) as ShadowRoot | undefined
+      if (shadowRoot) {
+        console.log('🎯 [WebMarker] Shadow DOM Triple-click detected. Reconstructing range on clean DOM.')
+        const clickedElement = shadowRoot.elementFromPoint(event.clientX, event.clientY)
+        if (clickedElement) {
+          const blockElement = findContainingBlock(clickedElement)
+          if (blockElement && blockElement.textContent?.trim()) {
+            const correctedRange = rangy.createRange()
+            correctedRange.selectNodeContents(blockElement)
+            if (!correctedRange.collapsed) {
+              range = correctedRange
+              console.log('  - Range reconstructed for Shadow DOM.')
+            }
+          }
+        }
+      }
+    }
+
+    // 对于所有其他情况（普通三击，Alt+拖拽），我们从清理后的 DOM 中获取一个新的选区。
+    if (!range) {
+      console.log('[WebMarker] Getting fresh selection from document after cleaning.')
+      const freshSelection = rangy.getSelection()
+      if (freshSelection.rangeCount > 0 && !freshSelection.isCollapsed) {
+        range = freshSelection.getRangeAt(0)
+        console.log('[WebMarker] Successfully got a fresh selection range.')
+      } else {
+        console.warn('[WebMarker] Selection was lost after DOM normalization. Aborting preview.')
+      }
+    }
+
+    // 3. 如果我们有一个有效的 range，就处理它。
+    if (range && !range.collapsed) {
+      const capturedText = range.toString().trim()
+      if (!capturedText) {
+        console.log('[WebMarker] New selection is whitespace only, ignoring.')
+        return
+      }
+
+      console.log('[WebMarker] Processing new valid range.')
+      try {
+        // 4. 在干净的 DOM 上序列化。这是最关键的一步。
+        const root = range.commonAncestorContainer.getRootNode()
+        const capturedRoot = root instanceof ShadowRoot ? root : undefined
+        serializedSelection = rangy.serializeRange(range, true, capturedRoot)
+        currentSerializationRoot = capturedRoot
+        currentMarkIdForColorChange = null
+        console.log('[WebMarker] Selection serialized on clean DOM.', { serialized: serializedSelection })
+
+        // 5. 应用预览。
+        console.log('[WebMarker] Applying preview to the new range.')
+        previewApplier?.applyToRange(range)
+        showTooltipForSelection(event.clientX, event.clientY, capturedText)
+      } catch (e) {
+        console.error('[WebMarker] Error during serialization or preview application:', e)
+        tooltipApp?.hide()
+      }
+      return
+    }
+
+    // 如果到这里，说明新选区操作后没有得到有效的 range。
+    tooltipApp?.hide()
     return
   }
 
-  const targetElement = (targetNode.nodeType === Node.ELEMENT_NODE ? targetNode : targetNode.parentNode) as HTMLElement,
-    markElement = targetElement?.closest('span[class*="webext-highlight-"]') as HTMLElement | null
+  // --- 如果不是新选区操作，则执行旧逻辑 ---
 
-  // 优化：处理在预览高亮上再次选择的问题
-  // 如果用户在预览高亮区域内操作...
-  if (markElement && markElement.classList.contains('webext-highlight-preview')) {
-    // ...但他们没有创建一个新的选区（即，只是单击），
-    // 那么我们什么也不做。这允许他们与工具提示进行交互。
-    if (selection.isCollapsed) {
-      return
-    }
-    // 否则，如果他们确实创建了一个新的选区（例如双击或拖动），我们将继续向下处理它。
+  // 如果点击的目标不是一个预览高亮，那么清除任何可能存在的预览。
+  const isPreview = markElement && markElement.classList.contains('webext-highlight-preview')
+  if (!isPreview) {
+    clearPreviewHighlight()
   }
 
-  // 在处理新选区或点击之前，清除任何现有的预览高亮
-  clearPreviewHighlight()
-
-  // 统一处理新选区，无论拖拽还是点击
-  if (event.altKey && !selection.isCollapsed) {
-    let capturedSerialized: string | null = null
-    let capturedRoot: Node | undefined
-    let capturedText = ''
-    try {
-      // "Bake" the selection to make it more stable, especially for "select all" or double-clicks.
-      // This is important for serializeSelection to work correctly with complex selections.
-      if (selection.rangeCount > 0) {
-        const rangeToBake = selection.getRangeAt(0).cloneRange()
-        selection.removeAllRanges()
-        selection.addRange(rangeToBake)
-      }
-
-      const range = selection.getRangeAt(0) // Now it's a baked range
-      const root = range.commonAncestorContainer.getRootNode()
-      if (root instanceof ShadowRoot) {
-        capturedRoot = root
-      }
-      capturedSerialized = rangy.serializeSelection(selection, true, capturedRoot)
-      if (root instanceof ShadowRoot) {
-        console.log('[WebMarker] Shadow DOM Selection Detected:', {
-          selection: selection.toString(),
-          rangeCount: selection.rangeCount,
-          serialized: capturedSerialized,
-          root: root
-        })
-      }
-      capturedText = selection.toString()
-    } catch (e) {
-      // 忽略序列化错误
-    }
-    if (capturedSerialized) {
-      currentSelection = null
-      serializedSelection = capturedSerialized
-      currentSerializationRoot = capturedRoot
-      currentMarkIdForColorChange = null
-
-      // console.log('[WebMarker] Applying preview to selection...')
-      // 直接应用预览高亮到当前选区，避免反序列化可能导致的问题（特别是在 Shadow DOM 全选时）
-      previewApplier?.applyToSelection()
-      showTooltipForSelection(event.clientX, event.clientY, capturedText)
-      return
-    }
-  }
-
-  // 情况 2：用户点击了已存在的高亮标记
-  if (markElement) {
-    // 此时 markElement 不会是 'webext-highlight-preview'
+  // 处理对已存在高亮标记的点击
+  if (markElement && initialSelection.isCollapsed) {
+    if (markElement.classList.contains('webext-highlight-preview')) return
     handleExistingMarkClick(markElement, event.clientX, event.clientY)
     return
   }
 
-  // 情况3：用户点击了页面的其他地方，并且没有选择文本
+  // 点击页面其他地方，无任何操作
   tooltipApp?.hide()
+  currentMarkIdForColorChange = null
+  serializedSelection = null
+  currentSerializationRoot = undefined
 }
 
 /**
@@ -518,27 +569,25 @@ function clearPreviewHighlight() {
   previewElements.forEach((el) => {
     if (!(el instanceof HTMLElement)) return
 
-    // 如果元素还有其他高亮类，只移除预览类。
+    // If the element has other highlight classes, just remove the preview class.
     if (
       el.className.split(' ').some((cls) => cls.startsWith('webext-highlight-') && cls !== 'webext-highlight-preview')
     ) {
       el.classList.remove('webext-highlight-preview')
     } else {
-      // 否则，它是一个纯粹的预览 span，所以解包它。
+      // Otherwise, it's a pure preview span, so unwrap it.
       const parent = el.parentNode
       if (parent) {
         parentsToNormalize.add(parent)
-        while (el.firstChild) parent.insertBefore(el.firstChild, el)
+        while (el.firstChild) {
+          parent.insertBefore(el.firstChild, el)
+        }
         parent.removeChild(el)
       }
     }
   })
 
-  // 强制合并相邻的文本节点，以确保 DOM 状态与序列化时完全一致。
-  // 这是为了防止因 `applyToSelection` 分割文本节点而导致的 `deserializeSelection` 失败。
-  parentsToNormalize.forEach((parent) => {
-    parent.normalize()
-  })
+  parentsToNormalize.forEach((parent) => parent.normalize())
 }
 
 // #endregion
@@ -570,14 +619,15 @@ async function handleSaveAction(note: string, color: string) {
     if (!serializedSelection) return
 
     try {
-      // console.log('[WebMarker] Saving new highlight...', { serializedSelection, currentSerializationRoot })
-
-      const win =
-        currentSerializationRoot instanceof ShadowRoot ? currentSerializationRoot.ownerDocument.defaultView : window
-      rangy.deserializeSelection(serializedSelection, currentSerializationRoot, win || window)
-      const selection = rangy.getSelection()
-      // console.log('[WebMarker] Deserialized selection:', selection)
-      if (selection && !selection.isCollapsed) await createHighlight(selection.getRangeAt(0), note, color)
+      const root = currentSerializationRoot || document.documentElement
+      const doc = root instanceof ShadowRoot ? root.ownerDocument : document
+      // --- 增加日志 ---
+      console.log('[WebMarker] handleSaveAction: Attempting to deserialize range.', {
+        serialized: serializedSelection,
+        root
+      })
+      const range = rangy.deserializeRange(serializedSelection, root, doc)
+      if (range && !range.collapsed) await createHighlight(range, note, color)
     } catch (e) {
       console.error('Error during save action (create):', e)
     }
@@ -595,16 +645,12 @@ async function handleDeleteAction() {
   if (!serializedSelection) return
 
   try {
-    const win =
-      currentSerializationRoot instanceof ShadowRoot ? currentSerializationRoot.ownerDocument.defaultView : window
-    rangy.deserializeSelection(serializedSelection, currentSerializationRoot, win || window)
-    const selection = rangy.getSelection()
-    if (!selection || selection.isCollapsed) return
-
-    const markElement = findMarkElementInRange(selection.getRangeAt(0))
-    if (markElement) {
-      const markId = getMarkIdFromElement(markElement)
-      if (markId) await removeMarkById(markId)
+    // Simplified delete logic: It relies on `currentMarkIdForColorChange` which is set
+    // when an existing mark is clicked. This is more robust than re-deserializing a selection.
+    if (currentMarkIdForColorChange) {
+      await removeMarkById(currentMarkIdForColorChange)
+    } else {
+      console.warn('[WebMarker] Delete action called without a mark ID.')
     }
   } catch (e) {
     console.error('Error during delete action:', e)
