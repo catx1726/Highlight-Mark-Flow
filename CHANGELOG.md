@@ -10,3 +10,6 @@
 
 ## [2025-12-30] 
 - Merge pull request #8 from catx1726/task/7-options-desc (9d9c57a)
+
+## [2025-12-30] 
+- Merge pull request #9 from catx1726/test/6-options-blacklist (0b1b4cb)
