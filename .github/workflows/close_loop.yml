@@ -1,50 +1,80 @@
 name: Issue Knowledge Closure
+
 on:
   pull_request:
     types: [closed]
     branches: [main]
-  workflow_dispatch: 
+  workflow_dispatch:
     inputs:
       issue_number:
-        description: '手动输入的 Issue 编号'
+        description: '关联的 Issue 编号 (不带 #)'
         required: true
+      pr_number:
+        description: 'PR 编号 (用于提取变更内容，选填)'
+        required: false
+
 permissions:
   contents: read
   issues: write
   pull-requests: read
+
 jobs:
   comment-on-issue:
-    if: github.event.pull_request.merged == true
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Post Knowledge Summary
         uses: actions/github-script@v6
         with:
           script: |
-            const prBody = context.payload.pull_request.body || "";
-            const prTitle = context.payload.pull_request.title;
+            let issueNumber;
+            let prBody = "";
+            let prTitle = "";
 
-            // 1. 动态获取关联的 Issue 编号 (支持 Fixes, Closes, Resolves)
-            const issueMatch = prBody.match(/(?:Fixes|Closes|Resolves)\s+#(\d+)/i) 
-                   || prTitle.match(/#(\d+)/);
-            if (!issueMatch) {
-              console.log("未检测到关联的 Issue 编号，跳过评论。");
+            // 1. 获取触发上下文
+            if (context.eventName === 'workflow_dispatch') {
+              // --- 手动触发模式 ---
+              issueNumber = context.payload.inputs.issue_number;
+              const prNum = context.payload.inputs.pr_number;
+              
+              if (prNum) {
+                try {
+                  const { data: pr } = await github.rest.pulls.get({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: parseInt(prNum)
+                  });
+                  prBody = pr.body || "";
+                  prTitle = pr.title;
+                } catch (e) {
+                  console.log(`获取 PR #${prNum} 信息失败: ${e.message}`);
+                }
+              }
+            } else {
+              // --- PR 自动合并模式 ---
+              prBody = context.payload.pull_request.body || "";
+              prTitle = context.payload.pull_request.title;
+              const issueMatch = prBody.match(/(?:Fixes|Closes|Resolves)\s+#(\d+)/i);
+              issueNumber = issueMatch ? issueMatch[1] : null;
+            }
+
+            // 检查 Issue 编号
+            if (!issueNumber) {
+              console.log("未检测到关联的 Issue 编号，跳过处理。");
               return;
             }
-            const issueNumber = issueMatch[1];
 
             // 2. 动态提取“核心变更”和“学习心得”
-            // 逻辑：从 PR 描述中寻找特定标记后的内容，如果没有则使用 PR 标题
             const extractSection = (tag) => {
               const regex = new RegExp(`${tag}\\s*([\\s\\S]*?)(?=\\n###|$)`, 'i');
               const match = prBody.match(regex);
               return match ? match[1].trim() : null;
             };
 
-            const coreChanges = extractSection("核心变更") || prTitle;
+            const coreChanges = extractSection("核心变更") || prTitle || "见归档文档";
             const learning = extractSection("学习心得") || "本次任务已按既定 SOP 完成，知识已沉淀至归档文档。";
 
-            // 3. 构造动态回帖内容
+            // 3. 构造回帖内容
             const commentBody = `
             ### ✅ 任务完成与知识沉淀
             本项目已成功合并！以下是本次协作产生的数字资产：
@@ -53,13 +83,13 @@ jobs:
             - **核心变更**: ${coreChanges}
             - **学习心得**: ${learning}
 
-            *此信息由 GitHub Actions 自动从 PR 动态提取并同步。*
+            *此信息由 GitHub Actions 自动提取并同步。*
             `;
 
             // 4. 发表评论
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: issueNumber,
-              body: commentBody.replace(/^\s+/gm, '') // 去除每一行开头的多余空格
+              issue_number: parseInt(issueNumber),
+              body: commentBody.replace(/^\s+/gm, '')
             });
