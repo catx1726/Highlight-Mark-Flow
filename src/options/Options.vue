@@ -142,7 +142,7 @@ function saveSettings() {
                 GitHub
               </a>
               <a
-                href="https://addons.mozilla.org/zh-CN/firefox/addon/highlight-mark-flow/"
+                href="https://addons.mozilla.org/zh-CN/firefox/addon/markflow/"
                 target="_blank"
                 class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline"
               >
