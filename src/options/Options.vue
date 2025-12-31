@@ -135,7 +135,7 @@ function saveSettings() {
             </p>
             <div class="flex gap-4">
               <a
-                href="https://github.com/catx1726/Highlight-Mark-Flow"
+                href="https://github.com/catx1726/MarkFlow"
                 target="_blank"
                 class="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 underline"
               >
