@@ -380,7 +380,7 @@ function processSelection(event: {
   ) as HTMLElement | null
   const markElement = targetElement?.closest('span[class*="webext-highlight-"]') as HTMLElement | null
 
-  const isNewSelectionAction = (event.altKey || event.detail >= 3) && !initialSelection.isCollapsed
+  const isNewSelectionAction = event.altKey && !initialSelection.isCollapsed
 
   if (isNewSelectionAction) {
     console.log(`[WebMarker] New selection action detected (alt=${event.altKey}, detail=${event.detail}).`)
