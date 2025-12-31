@@ -37,3 +37,6 @@
 
 ## [2025-12-31] 
 - Merge pull request #13 from catx1726/task/12-alt-fix (2438e90)
+
+## [2025-12-31] 
+- env:update version (f197d9d)
