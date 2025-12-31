@@ -1,6 +1,6 @@
 # 🌊 MarkFlow
 
-**不仅仅是高亮工具，更是你的网页内容导航仪。**
+**More than a highlighter, it's your web content navigator.** **不仅仅是高亮工具，更是你的网页内容导航仪。**
 
 [![Firefox Add-on](https://img.shields.io/badge/Firefox-Add--on-orange)](https://addons.mozilla.org/zh-CN/firefox/addon/markflow/) ![Local First](https://img.shields.io/badge/Storage-Local--Only-blue) ![Privacy](https://img.shields.io/badge/Privacy-No--Login-green)
 
