@@ -13,3 +13,6 @@
 
 ## [2025-12-30] 
 - Merge pull request #9 from catx1726/test/6-options-blacklist (0b1b4cb)
+
+## [2025-12-31] 
+- Merge pull request #11 from catx1726/task/10-side-save (9db9003)
